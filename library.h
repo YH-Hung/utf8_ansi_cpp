@@ -21,6 +21,11 @@ std::string from_utf8(std::string_view utf8, std::string_view to_encoding);
 std::string big5_to_utf8(std::string_view big5_bytes);
 std::string utf8_to_big5(std::string_view utf8);
 
+// "Direct" converters that avoid allocating a full UTF-16 intermediate buffer
+// by using ICU's streaming API with a small pivot (ucnv_convertEx).
+std::string big5_to_utf8_dr(std::string_view big5_bytes);
+std::string utf8_to_big5_dr(std::string_view utf8);
+
 // C-style input overloads (null-terminated)
 std::string convert_encoding(const char* input,
                              std::string_view from_encoding,

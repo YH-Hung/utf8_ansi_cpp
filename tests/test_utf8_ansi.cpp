@@ -131,3 +131,42 @@ TEST(EncodingTest, Utf8ToBig5_FailsOnEmoji) {
         (void)big5;
     }, std::runtime_error);
 }
+
+// New tests for streaming-based direct converters (DR)
+TEST(EncodingTest, DR_Utf8ToBig5AndBack_Chinese) {
+    std::string s = "\xE4\xB8\xAD\xE6\x96\x87"; // 中文
+    std::string big5 = utf8_to_big5_dr(s);
+    std::string round = big5_to_utf8_dr(big5);
+    spdlog::info("[DR] big5 bytes: {}", bytes_to_hex(big5));
+    EXPECT_EQ(round, s);
+}
+
+TEST(EncodingTest, DR_Equivalence_WithNonDR) {
+    std::vector<std::string> samples = {
+        "Hello, 123!",
+        "中文測試",
+        "「你好，世界！」（測試：中文、標點。）"
+    };
+    for (const auto& s : samples) {
+        auto b1 = utf8_to_big5(s);
+        auto b2 = utf8_to_big5_dr(s);
+        EXPECT_EQ(b2, b1) << "utf8_to_big5_dr differs from utf8_to_big5 for: " << s;
+        auto u1 = big5_to_utf8(b1);
+        auto u2 = big5_to_utf8_dr(b2);
+        EXPECT_EQ(u2, u1) << "big5_to_utf8_dr differs from big5_to_utf8 for: " << s;
+    }
+}
+
+TEST(EncodingTest, DR_Utf8ToBig5_FailsOnEmoji) {
+    std::string s = "你好😀";
+    EXPECT_THROW({
+        auto big5 = utf8_to_big5_dr(s);
+        (void)big5;
+    }, std::runtime_error);
+}
+
+TEST(EncodingTest, DR_EmptyInput) {
+    std::string s;
+    EXPECT_EQ(utf8_to_big5_dr(s), std::string());
+    EXPECT_EQ(big5_to_utf8_dr(s), std::string());
+}

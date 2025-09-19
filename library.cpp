@@ -77,6 +77,78 @@ std::string convert_encoding_impl(const char* input,
     return out;
 }
 
+// Streaming conversion using ICU ucnv_convertEx to avoid allocating a full UTF-16 buffer.
+static std::string convert_encoding_streaming(std::string_view input,
+                                              std::string_view from_encoding,
+                                              std::string_view to_encoding,
+                                              std::size_t initial_out_capacity) {
+    if (input.data() == nullptr && input.size() != 0) {
+        throw std::invalid_argument("convert_encoding_streaming: input is null but size != 0");
+    }
+
+    UConverterHandle from(from_encoding);
+    UConverterHandle to(to_encoding);
+
+    // Prepare output buffer with a heuristic initial capacity.
+    std::string out;
+    std::size_t cap = initial_out_capacity;
+    if (cap < 16) cap = 16;
+    out.resize(cap);
+    char* target = out.data();
+    const char* targetLimit = out.data() + out.size();
+
+    const char* source = input.data();
+    const char* sourceLimit = input.data() + input.size();
+
+    // Small pivot buffer for UTF-16 code units used internally by ICU.
+    UChar pivot[256];
+    UChar* pivotSource = pivot;
+    UChar* pivotTarget = pivot;
+
+    bool reset = true;
+
+    for (;;) {
+        UErrorCode status = U_ZERO_ERROR;
+        UBool flush = (source == sourceLimit);
+        ucnv_convertEx(
+            /*targetCnv*/ to.get(),
+            /*sourceCnv*/ from.get(),
+            /*target*/ &target,
+            /*targetLimit*/ targetLimit,
+            /*source*/ &source,
+            /*sourceLimit*/ sourceLimit,
+            /*pivotStart*/ pivot,
+            /*pivotSource*/ &pivotSource,
+            /*pivotTarget*/ &pivotTarget,
+            /*pivotLimit*/ pivot + (sizeof(pivot)/sizeof(pivot[0])),
+            /*reset*/ (reset ? static_cast<UBool>(1) : static_cast<UBool>(0)),
+            /*flush*/ static_cast<UBool>(flush),
+            /*status*/ &status);
+        reset = false;
+
+        if (status == U_BUFFER_OVERFLOW_ERROR) {
+            // Grow the output buffer and continue.
+            std::size_t used = static_cast<std::size_t>(target - out.data());
+            std::size_t newCap = out.size() * 2u + 16u;
+            out.resize(newCap);
+            target = out.data() + used;
+            targetLimit = out.data() + out.size();
+            continue;
+        }
+        if (U_FAILURE(status)) {
+            throw std::runtime_error(
+                std::string("ICU ucnv_convertEx failed for ") + std::string(from_encoding) + " -> " + std::string(to_encoding));
+        }
+        if (flush) {
+            break; // all input consumed and pivot drained
+        }
+        // else, loop continues to consume remaining input
+    }
+
+    out.resize(static_cast<std::size_t>(target - out.data()));
+    return out;
+}
+
 } // namespace
 
 std::string convert_encoding(std::string_view input,
@@ -99,6 +171,18 @@ std::string big5_to_utf8(std::string_view big5_bytes) {
 
 std::string utf8_to_big5(std::string_view utf8) {
     return from_utf8(utf8, "Big5");
+}
+
+std::string big5_to_utf8_dr(std::string_view big5_bytes) {
+    // Big5 bytes (1–2 per char) can expand up to ~3 bytes/char in UTF-8
+    std::size_t guess = big5_bytes.size() * 3u + 16u;
+    return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess);
+}
+
+std::string utf8_to_big5_dr(std::string_view utf8) {
+    // UTF-8 (1–4 bytes/char) maps to Big5 (1–2 bytes/char); allocate generously
+    std::size_t guess = utf8.size() * 2u + 16u;
+    return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess);
 }
 
 std::string convert_encoding(const char* input,

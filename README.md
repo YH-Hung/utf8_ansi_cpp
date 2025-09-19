@@ -72,6 +72,10 @@ int main() {
     std::string utf8_text = u8"中文測試";
     std::string big5_out = utf8_to_big5(utf8_text);
 
+    // Streaming-based (no full UTF-16 buffer materialization) variants using ICU ucnv_convertEx
+    std::string utf8_dr = big5_to_utf8_dr(big5_bytes);
+    std::string big5_out_dr = utf8_to_big5_dr(utf8_text);
+
     // Any encoding ↔ UTF-8
     std::string iso_8859_1 = /* ... */;
     std::string utf8_from_iso = to_utf8(iso_8859_1, "ISO-8859-1");
