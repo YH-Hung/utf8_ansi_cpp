@@ -1,0 +1,71 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# CLion project files
+.idea/
+# VSCode (sometimes used alongside CLion)
+.vscode/
+
+# CMake build directories (CLion defaults)
+cmake-build-*/
+# Generic build/output dirs
+build/
+out/
+
+# If someone configures CMake in-source (discouraged), ignore its artifacts
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+CTestCostData.txt
+Testing/
+Makefile
+
+# Ninja/Make generators artifacts (if generated in-source)
+rules.ninja
+build.ninja
+
+# Compilation database (often generated into build dir; ignore if in-source)
+compile_commands.json
+
+# Compiled objects and libraries
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Executables / apps
+*.exe
+*.out
+*.app
+
+# Debugging/profiling
+*.pdb
+*.ipdb
+*.iobj
+*.gcno
+*.gcda
+*.profraw
+*.profdata
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Editor/OS junk
+*~
+*.swp
+*.swo
+*.orig
+Thumbs.db
+ehthumbs.db
