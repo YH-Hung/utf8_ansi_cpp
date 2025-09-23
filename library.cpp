@@ -5,12 +5,47 @@
 #include <string_view>
 #include <vector>
 #include <iterator>
+#include <limits>
 
 #include <unicode/ucnv.h>
 
 namespace utf8ansi {
 
 namespace {
+
+/**
+ * Safely convert std::size_t to int32_t for ICU APIs.
+ * Throws std::runtime_error if the size exceeds INT32_MAX.
+ */
+int32_t safe_size_to_int32(const std::size_t size) {
+    constexpr auto max_int32 = static_cast<std::size_t>(std::numeric_limits<int32_t>::max());
+    if (size > max_int32) {
+        throw std::runtime_error("Input size exceeds maximum supported size (2GB)");
+    }
+    return static_cast<int32_t>(size);
+}
+
+/**
+ * Safely multiply size_t values, checking for overflow.
+ * Throws std::runtime_error if the multiplication would overflow.
+ */
+std::size_t safe_multiply(const std::size_t a, const std::size_t b) {
+    if (a != 0 && b > std::numeric_limits<std::size_t>::max() / a) {
+        throw std::runtime_error("Buffer size calculation overflow");
+    }
+    return a * b;
+}
+
+/**
+ * Safely add size_t values, checking for overflow.
+ * Throws std::runtime_error if the addition would overflow.
+ */
+std::size_t safe_add(const std::size_t a, const std::size_t b) {
+    if (a > std::numeric_limits<std::size_t>::max() - b) {
+        throw std::runtime_error("Buffer size calculation overflow");
+    }
+    return a + b;
+}
 
 struct UConverterHandle {
     // RAII holder for an ICU UConverter (character set converter).
@@ -22,6 +57,12 @@ struct UConverterHandle {
     // Usage: create as an automatic (stack) variable and pass get() to ICU APIs.
     // Thread-safety: do not share a single UConverter across threads.
     UConverter* conv{nullptr};
+    
+    // Delete copy and move operations to prevent accidental copying/moving
+    UConverterHandle(const UConverterHandle&) = delete;
+    UConverterHandle& operator=(const UConverterHandle&) = delete;
+    UConverterHandle(UConverterHandle&&) = delete;
+    UConverterHandle& operator=(UConverterHandle&&) = delete;
     explicit UConverterHandle(const std::string_view name) {
         UErrorCode status = U_ZERO_ERROR;
         conv = ucnv_open(std::string(name).c_str(), &status);
@@ -159,7 +200,7 @@ std::string convert_encoding_streaming(const std::string_view input,
 
     for (;;) {
         UErrorCode status = U_ZERO_ERROR;
-        const UBool flush = (source == sourceLimit);
+        const UBool flush = (source == sourceLimit) ? 1 : 0;
         ucnv_convertEx(
             /*targetCnv*/ to.get(),
             /*sourceCnv*/ from.get(),
@@ -171,7 +212,7 @@ std::string convert_encoding_streaming(const std::string_view input,
             /*pivotSource*/ &pivotSource,
             /*pivotTarget*/ &pivotTarget,
             /*pivotLimit*/ pivot + std::size(pivot),
-            /*reset*/ reset ? static_cast<UBool>(1) : static_cast<UBool>(0),
+            /*reset*/ reset ? 1 : 0,
             /*flush*/ flush,
             /*status*/ &status);
         reset = false;
@@ -179,7 +220,7 @@ std::string convert_encoding_streaming(const std::string_view input,
         if (status == U_BUFFER_OVERFLOW_ERROR) {
             // Grow the output buffer and continue.
             const auto used = static_cast<std::size_t>(target - out.data());
-            const std::size_t newCap = out.size() * 2u + 16u;
+            const std::size_t newCap = safe_add(safe_multiply(out.size(), 2u), 16u);
             out.resize(newCap);
             target = out.data() + used;
             targetLimit = out.data() + out.size();
@@ -204,15 +245,15 @@ std::string convert_encoding_streaming(const std::string_view input,
 std::string convert_encoding(const std::string_view input,
                              const std::string_view from_encoding,
                              const std::string_view to_encoding) {
-    return convert_encoding_impl(input.data(), static_cast<int32_t>(input.size()), from_encoding, to_encoding);
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, to_encoding);
 }
 
 std::string to_utf8(const std::string_view input, const std::string_view from_encoding) {
-    return convert_encoding_impl(input.data(), static_cast<int32_t>(input.size()), from_encoding, "UTF-8");
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, "UTF-8");
 }
 
 std::string from_utf8(const std::string_view utf8, const std::string_view to_encoding) {
-    return convert_encoding_impl(utf8.data(), static_cast<int32_t>(utf8.size()), "UTF-8", to_encoding);
+    return convert_encoding_impl(utf8.data(), safe_size_to_int32(utf8.size()), "UTF-8", to_encoding);
 }
 
 std::string big5_to_utf8(const std::string_view big5_bytes) {
@@ -225,13 +266,13 @@ std::string utf8_to_big5(const std::string_view utf8) {
 
 std::string big5_to_utf8_dr(const std::string_view big5_bytes) {
     // Big5 bytes (1–2 per char) can expand up to ~3 bytes/char in UTF-8
-    const std::size_t guess = big5_bytes.size() * 3u + 16u;
+    const std::size_t guess = safe_add(safe_multiply(big5_bytes.size(), 3u), 16u);
     return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess);
 }
 
 std::string utf8_to_big5_dr(const std::string_view utf8) {
     // UTF-8 (1–4 bytes/char) maps to Big5 (1–2 bytes/char); allocate generously
-    const std::size_t guess = utf8.size() * 2u + 16u;
+    const std::size_t guess = safe_add(safe_multiply(utf8.size(), 2u), 16u);
     return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess);
 }
 
@@ -252,15 +293,15 @@ std::string from_utf8(const char* utf8, const std::string_view to_encoding) {
 std::string convert_encoding(const char* input, const std::size_t length,
                              const std::string_view from_encoding,
                              const std::string_view to_encoding) {
-    return convert_encoding_impl(input, static_cast<int32_t>(length), from_encoding, to_encoding);
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, to_encoding);
 }
 
 std::string to_utf8(const char* input, const std::size_t length, const std::string_view from_encoding) {
-    return convert_encoding_impl(input, static_cast<int32_t>(length), from_encoding, "UTF-8");
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, "UTF-8");
 }
 
 std::string from_utf8(const char* utf8, const std::size_t length, const std::string_view to_encoding) {
-    return convert_encoding_impl(utf8, static_cast<int32_t>(length), "UTF-8", to_encoding);
+    return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding);
 }
 
 } // namespace utf8ansi
