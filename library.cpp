@@ -12,6 +12,14 @@ namespace utf8ansi {
 namespace {
 
 struct UConverterHandle {
+    // RAII holder for an ICU UConverter (character set converter).
+    // - Acquires the converter in the constructor using an ICU encoding name or alias.
+    // - Configures both "to Unicode" and "from Unicode" callbacks to STOP on errors,
+    //   so invalid sequences cause an immediate failure instead of silent substitution.
+    // - Releases the converter in the destructor.
+    //
+    // Usage: create as an automatic (stack) variable and pass get() to ICU APIs.
+    // Thread-safety: do not share a single UConverter across threads.
     UConverter* conv{nullptr};
     explicit UConverterHandle(std::string_view name) {
         UErrorCode status = U_ZERO_ERROR;
@@ -19,18 +27,35 @@ struct UConverterHandle {
         if (U_FAILURE(status) || conv == nullptr) {
             throw std::runtime_error("Failed to open ICU converter: " + std::string(name));
         }
-        // Configure to STOP on errors instead of substituting.
+        // Configure ICU to stop on conversion errors (no substitution/leniency).
         UErrorCode s2 = U_ZERO_ERROR;
         ucnv_setToUCallBack(conv, UCNV_TO_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
         s2 = U_ZERO_ERROR;
         ucnv_setFromUCallBack(conv, UCNV_FROM_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
+        // Any callback setup failure will later manifest as a conversion failure via ICU's status codes.
     }
     ~UConverterHandle() {
         if (conv) ucnv_close(conv);
     }
+    // Accessor for the underlying ICU handle; ownership remains with this wrapper.
     UConverter* get() const { return conv; }
 };
 
+/**
+ * Core conversion implementation using ICU in two pass preflight+convert steps:
+ * 1) Source bytes -> UTF-16 (UChar) via ucnv_toUChars (preflight to size, then actual convert).
+ * 2) UTF-16 -> target bytes via ucnv_fromUChars (preflight to size, then actual convert).
+ *
+ * Parameters:
+ * - input: pointer to the source byte sequence; must not be null.
+ * - length: number of bytes in input. Use -1 to indicate NUL-terminated input (ICU convention).
+ * - from_encoding: ICU canonical or alias name of the source encoding.
+ * - to_encoding: ICU canonical or alias name of the destination encoding.
+ *
+ * Throws std::invalid_argument if input is null.
+ * Throws std::runtime_error on ICU errors during either phase.
+ * Returns the converted bytes without a terminating NUL.
+ */
 std::string convert_encoding_impl(const char* input,
                                   int32_t length,
                                   std::string_view from_encoding,
@@ -77,8 +102,24 @@ std::string convert_encoding_impl(const char* input,
     return out;
 }
 
-// Streaming conversion using ICU ucnv_convertEx to avoid allocating a full UTF-16 buffer.
-static std::string convert_encoding_streaming(std::string_view input,
+/**
+ * Streaming conversion using ICU ucnv_convertEx to avoid allocating a full UTF-16 buffer.
+ *
+ * This function converts incrementally through a small UTF-16 pivot buffer, growing the
+ * output buffer as needed. Converters are configured to STOP on errors; any invalid input
+ * results in an exception rather than silent substitution.
+ *
+ * Parameters:
+ * - input: the source bytes to convert.
+ * - from_encoding: ICU name (canonical or alias) of the source encoding.
+ * - to_encoding: ICU name (canonical or alias) of the target encoding.
+ * - initial_out_capacity: heuristic initial size for the output buffer; it will expand if required.
+ *
+ * Returns the converted bytes.
+ * Throws std::invalid_argument if input.data() is null while input.size() != 0.
+ * Throws std::runtime_error on ICU conversion errors.
+ */
+std::string convert_encoding_streaming(std::string_view input,
                                               std::string_view from_encoding,
                                               std::string_view to_encoding,
                                               std::size_t initial_out_capacity) {
