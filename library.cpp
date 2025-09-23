@@ -4,6 +4,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <iterator>
 
 #include <unicode/ucnv.h>
 
@@ -30,9 +31,14 @@ struct UConverterHandle {
         // Configure ICU to stop on conversion errors (no substitution/leniency).
         UErrorCode s2 = U_ZERO_ERROR;
         ucnv_setToUCallBack(conv, UCNV_TO_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
+        if (U_FAILURE(s2)) {
+            throw std::runtime_error("Failed to set ICU TO-UNICODE callback to STOP for: " + std::string(name));
+        }
         s2 = U_ZERO_ERROR;
         ucnv_setFromUCallBack(conv, UCNV_FROM_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
-        // Any callback setup failure will later manifest as a conversion failure via ICU's status codes.
+        if (U_FAILURE(s2)) {
+            throw std::runtime_error("Failed to set ICU FROM-UNICODE callback to STOP for: " + std::string(name));
+        }
     }
     ~UConverterHandle() {
         if (conv) ucnv_close(conv);
@@ -61,6 +67,9 @@ std::string convert_encoding_impl(const char* input,
                                   const std::string_view from_encoding,
                                   const std::string_view to_encoding) {
     if (input == nullptr) {
+        if (length == 0) {
+            return {};
+        }
         throw std::invalid_argument("convert_encoding: input is null");
     }
 
