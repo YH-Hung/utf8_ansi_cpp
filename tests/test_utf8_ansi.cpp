@@ -312,3 +312,66 @@ TEST(EncodingTest, StreamingConverter_BufferGrowth) {
     spdlog::info("Buffer growth test: original={} bytes, big5={} bytes, round-trip={} bytes", 
                  input.size(), big5_result.size(), utf8_result.size());
 }
+
+
+// Additional tests for C-style Big5 helper overloads (null-terminated and explicit-length)
+TEST(EncodingTest, CStr_Big5Helpers_RoundTrip_Ascii) {
+    const char* s = "Hello, 123!";
+    std::string big5 = utf8_to_big5(s);
+    std::string round = big5_to_utf8(big5.c_str());
+    EXPECT_EQ(round, s);
+}
+
+TEST(EncodingTest, CStr_Big5Helpers_RoundTrip_Chinese) {
+    const char* s = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文" in UTF-8
+    std::string big5 = utf8_to_big5(s);
+    std::string round = big5_to_utf8(big5.c_str());
+    EXPECT_EQ(round, std::string(s));
+}
+
+TEST(EncodingTest, CStrLen_Big5Helpers_EmbeddedNull_RoundTrip) {
+    std::string s("A\0B", 3);
+    std::string big5 = utf8_to_big5(s.data(), s.size());
+    std::string round = big5_to_utf8(big5.data(), big5.size());
+    EXPECT_EQ(round, s);
+}
+
+TEST(EncodingTest, DR_CStr_Big5Helpers_RoundTrip_Chinese) {
+    const char* s = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文" in UTF-8
+    std::string big5 = utf8_to_big5_dr(s);
+    std::string round = big5_to_utf8_dr(big5.c_str());
+    EXPECT_EQ(round, std::string(s));
+}
+
+TEST(EncodingTest, DR_CStr_Nullptr_Throws) {
+    EXPECT_THROW({ auto out = big5_to_utf8_dr((const char*)nullptr); (void)out; }, std::invalid_argument);
+    EXPECT_THROW({ auto out = utf8_to_big5_dr((const char*)nullptr); (void)out; }, std::invalid_argument);
+}
+
+TEST(EncodingTest, DR_CStrLen_Nullptr_ZeroLen_Empty) {
+    EXPECT_EQ(big5_to_utf8_dr(nullptr, 0), std::string());
+    EXPECT_EQ(utf8_to_big5_dr(nullptr, 0), std::string());
+}
+
+TEST(EncodingTest, DR_CStrLen_Nullptr_NonZeroLen_Throws) {
+    EXPECT_THROW({ auto out = big5_to_utf8_dr(nullptr, 1); (void)out; }, std::invalid_argument);
+    EXPECT_THROW({ auto out = utf8_to_big5_dr(nullptr, 1); (void)out; }, std::invalid_argument);
+}
+
+TEST(EncodingTest, NonDR_CStrLen_Nullptr_Semantics) {
+    // Length-overload should return empty for length==0 and throw for length>0
+    EXPECT_EQ(big5_to_utf8(nullptr, 0), std::string());
+    EXPECT_EQ(utf8_to_big5(nullptr, 0), std::string());
+    EXPECT_THROW({ auto out = big5_to_utf8(nullptr, 1); (void)out; }, std::invalid_argument);
+    EXPECT_THROW({ auto out = utf8_to_big5(nullptr, 1); (void)out; }, std::invalid_argument);
+}
+
+TEST(EncodingTest, Equivalence_CStr_vs_StringView_Big5Helpers) {
+    std::string s = "中文測試";
+    auto b_sv = utf8_to_big5(std::string_view(s));
+    auto b_cs = utf8_to_big5(s.c_str());
+    EXPECT_EQ(b_cs, b_sv);
+    auto u_sv = big5_to_utf8(std::string_view(b_sv));
+    auto u_cs = big5_to_utf8(b_cs.c_str());
+    EXPECT_EQ(u_cs, u_sv);
+}

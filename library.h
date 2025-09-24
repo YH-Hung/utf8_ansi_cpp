@@ -32,12 +32,24 @@ namespace utf8ansi {
 [[nodiscard]] std::string to_utf8(const char* input, std::string_view from_encoding);
 [[nodiscard]] std::string from_utf8(const char* utf8, std::string_view to_encoding);
 
+// Big5 helpers (C-style, null-terminated)
+[[nodiscard]] std::string big5_to_utf8(const char* big5_bytes);
+[[nodiscard]] std::string utf8_to_big5(const char* utf8);
+[[nodiscard]] std::string big5_to_utf8_dr(const char* big5_bytes);
+[[nodiscard]] std::string utf8_to_big5_dr(const char* utf8);
+
 // C-style input overloads with explicit length (for non-null-terminated data)
 [[nodiscard]] std::string convert_encoding(const char* input, std::size_t length,
                              std::string_view from_encoding,
                              std::string_view to_encoding);
 [[nodiscard]] std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding);
 [[nodiscard]] std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding);
+
+// Big5 helpers (C-style with explicit length)
+[[nodiscard]] std::string big5_to_utf8(const char* big5_bytes, std::size_t length);
+[[nodiscard]] std::string utf8_to_big5(const char* utf8, std::size_t length);
+[[nodiscard]] std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length);
+[[nodiscard]] std::string utf8_to_big5_dr(const char* utf8, std::size_t length);
 
 } // namespace utf8ansi
 

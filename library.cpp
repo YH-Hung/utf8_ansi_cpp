@@ -304,4 +304,58 @@ std::string from_utf8(const char* utf8, const std::size_t length, const std::str
     return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding);
 }
 
+// Big5 helpers (C-style, null-terminated)
+std::string big5_to_utf8(const char* big5_bytes) {
+    return to_utf8(big5_bytes, "Big5");
+}
+
+std::string utf8_to_big5(const char* utf8) {
+    return from_utf8(utf8, "Big5");
+}
+
+std::string big5_to_utf8_dr(const char* big5_bytes) {
+    if (big5_bytes == nullptr) {
+        throw std::invalid_argument("big5_to_utf8_dr: input is null");
+    }
+    const std::size_t len = std::char_traits<char>::length(big5_bytes);
+    const std::size_t guess = safe_add(safe_multiply(len, 3u), 16u);
+    return convert_encoding_streaming(std::string_view(big5_bytes, len), "Big5", "UTF-8", guess);
+}
+
+std::string utf8_to_big5_dr(const char* utf8) {
+    if (utf8 == nullptr) {
+        throw std::invalid_argument("utf8_to_big5_dr: input is null");
+    }
+    const std::size_t len = std::char_traits<char>::length(utf8);
+    const std::size_t guess = safe_add(safe_multiply(len, 2u), 16u);
+    return convert_encoding_streaming(std::string_view(utf8, len), "UTF-8", "Big5", guess);
+}
+
+// Big5 helpers (C-style with explicit length)
+std::string big5_to_utf8(const char* big5_bytes, const std::size_t length) {
+    return to_utf8(big5_bytes, length, "Big5");
+}
+
+std::string utf8_to_big5(const char* utf8, const std::size_t length) {
+    return from_utf8(utf8, length, "Big5");
+}
+
+std::string big5_to_utf8_dr(const char* big5_bytes, const std::size_t length) {
+    if (big5_bytes == nullptr) {
+        if (length == 0) return {};
+        throw std::invalid_argument("big5_to_utf8_dr: input is null");
+    }
+    const std::size_t guess = safe_add(safe_multiply(length, 3u), 16u);
+    return convert_encoding_streaming(std::string_view(big5_bytes, length), "Big5", "UTF-8", guess);
+}
+
+std::string utf8_to_big5_dr(const char* utf8, const std::size_t length) {
+    if (utf8 == nullptr) {
+        if (length == 0) return {};
+        throw std::invalid_argument("utf8_to_big5_dr: input is null");
+    }
+    const std::size_t guess = safe_add(safe_multiply(length, 2u), 16u);
+    return convert_encoding_streaming(std::string_view(utf8, length), "UTF-8", "Big5", guess);
+}
+
 } // namespace utf8ansi

@@ -81,14 +81,22 @@ int main() {
     std::string utf8_from_iso = to_utf8(iso_8859_1, "ISO-8859-1");
     std::string shift_jis = from_utf8(utf8_from_iso, "Shift_JIS");
 
-    // C-string overloads (null-terminated)
-    const char* sjis_cstr = /* ... */;
-    std::string utf8_from_sjis = to_utf8(sjis_cstr, "Shift_JIS");
+    // Big5 helpers for C-strings (null-terminated)
+    const char* big5_cstr = /* ... */;
+    std::string utf8_from_big5_c = big5_to_utf8(big5_cstr);
+    std::string big5_from_utf8_c = utf8_to_big5(utf8_text.c_str());
 
-    // C-string with explicit length (not null-terminated)
+    // Big5 helpers with explicit length (non-null-terminated)
     const char* raw = /* ptr to bytes */;
     size_t len = /* size */;
-    std::string utf8_from_big5 = to_utf8(raw, len, "Big5");
+    std::string utf8_from_big5_len = big5_to_utf8(raw, len);
+    std::string big5_from_utf8_len = utf8_to_big5(utf8_text.data(), utf8_text.size());
+
+    // Streaming-based (DR) C-style overloads
+    std::string utf8_from_big5_dr_c = big5_to_utf8_dr(big5_cstr);
+    std::string big5_from_utf8_dr_c = utf8_to_big5_dr(utf8_text.c_str());
+    std::string utf8_from_big5_dr_len = big5_to_utf8_dr(raw, len);
+    std::string big5_from_utf8_dr_len = utf8_to_big5_dr(utf8_text.data(), utf8_text.size());
 
     std::cout << utf8 << "\n";
 }
@@ -106,17 +114,36 @@ All functions are free functions in the `utf8ansi` namespace.
 - Big5 helpers:
   - `std::string big5_to_utf8(std::string_view big5_bytes);`
   - `std::string utf8_to_big5(std::string_view utf8);`
+  - `std::string big5_to_utf8_dr(std::string_view big5_bytes);` (streaming)
+  - `std::string utf8_to_big5_dr(std::string_view utf8);` (streaming)
 - C-style overloads (null-terminated `const char*`):
-  - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding);`
-  - `std::string to_utf8(const char* input, std::string_view from_encoding);`
-  - `std::string from_utf8(const char* utf8, std::string_view to_encoding);`
+  - Generic:
+    - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding);`
+    - `std::string to_utf8(const char* input, std::string_view from_encoding);`
+    - `std::string from_utf8(const char* utf8, std::string_view to_encoding);`
+  - Big5 helpers:
+    - `std::string big5_to_utf8(const char* big5_bytes);`
+    - `std::string utf8_to_big5(const char* utf8);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8);` (streaming)
 - C-style overloads with explicit length (non-null-terminated):
-  - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding);`
-  - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding);`
-  - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding);`
+  - Generic:
+    - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding);`
+    - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding);`
+    - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding);`
+  - Big5 helpers:
+    - `std::string big5_to_utf8(const char* big5_bytes, std::size_t length);`
+    - `std::string utf8_to_big5(const char* utf8, std::size_t length);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8, std::size_t length);` (streaming)
 
 ### Error handling
-All functions throw `std::runtime_error` on conversion errors and `std::invalid_argument` if input is null for C-string overloads. ICU is configured to stop on unmappable sequences (no silent substitution).
+- All functions throw `std::runtime_error` on conversion errors. ICU converters are configured to STOP on errors (no silent substitution).
+- For null-terminated C-string overloads (`const char*`), passing `nullptr` throws `std::invalid_argument`.
+- For explicit-length overloads (`const char* ptr, std::size_t len`):
+  - If `ptr == nullptr` and `len == 0`, the functions return an empty string.
+  - If `ptr == nullptr` and `len > 0`, the functions throw `std::invalid_argument`.
+- The same semantics apply to the streaming (DR) variants.
 
 ### Encoding names
 Use standard ICU encoding names (e.g., `"UTF-8"`, `"Big5"`, `"Shift_JIS"`, `"ISO-8859-1"`). Names are case-insensitive.
