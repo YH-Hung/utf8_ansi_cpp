@@ -60,7 +60,9 @@ Install the library and header using CMake’s install step.
 
 Option A: set the install prefix at configure time:
 ```
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+export MY_INSTALL_DIR=$HOME/.local
+
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$MY_INSTALL_DIR
 cmake --build build --target utf8_ansi_cpp
 cmake --install build
 ```
