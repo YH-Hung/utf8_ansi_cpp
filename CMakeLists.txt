@@ -5,12 +5,29 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(ICU REQUIRED COMPONENTS uc)
 
-add_library(utf8_ansi_cpp SHARED library.cpp)
+add_library(utf8_ansi_cpp SHARED utf8ansi.cpp)
 
-target_include_directories(utf8_ansi_cpp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# Proper include dirs for build and install
+include(GNUInstallDirs)
+
+target_include_directories(utf8_ansi_cpp PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+)
 
 # Link against ICU libraries
 target_link_libraries(utf8_ansi_cpp PUBLIC ICU::uc)
+
+# Install rules
+install(TARGETS utf8_ansi_cpp
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/utf8ansi.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
 
 # -----------------
 # Tests

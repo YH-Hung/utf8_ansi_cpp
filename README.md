@@ -54,11 +54,44 @@ If ICU is installed in a non-standard prefix, add:
 cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/icu/prefix
 ```
 
+## Install
+
+Install the library and header using CMake’s install step.
+
+Option A: set the install prefix at configure time:
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local
+cmake --build build --target utf8_ansi_cpp
+cmake --install build
+```
+
+Option B: specify the prefix at install time:
+```
+cmake --build build --target utf8_ansi_cpp
+cmake --install build --prefix /usr/local
+```
+
+What gets installed (GNUInstallDirs):
+- Header: <prefix>/include/utf8ansi.h
+- Shared library: <prefix>/lib (Linux/macOS: libutf8_ansi_cpp.*; Windows: utf8_ansi_cpp.dll + import lib)
+
+Notes:
+- If ICU is not in a standard location, use the same hints shown above when configuring.
+- At runtime, ensure ICU’s shared libraries are discoverable:
+  - Linux: add ICU’s lib dir to /etc/ld.so.conf.d and run ldconfig, or set LD_LIBRARY_PATH.
+  - macOS: set DYLD_LIBRARY_PATH or install ICU to a standard prefix.
+  - Windows: add ICU’s bin dir to PATH.
+
+Staged installs (packaging):
+```
+DESTDIR=/tmp/stage cmake --install build --prefix /usr/local
+```
+
 ## How to use
 Include the header and link against the `utf8_ansi_cpp` library (and ICU).
 
 ```cpp
-#include "library.h"
+#include "utf8ansi.h"
 #include <iostream>
 
 int main() {
