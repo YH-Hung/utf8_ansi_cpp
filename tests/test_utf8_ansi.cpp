@@ -375,3 +375,90 @@ TEST(EncodingTest, Equivalence_CStr_vs_StringView_Big5Helpers) {
     auto u_cs = big5_to_utf8(b_cs.c_str());
     EXPECT_EQ(u_cs, u_sv);
 }
+
+
+// --- Tests for bypassing decode errors with mislabeled source bytes ---
+TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_DefaultThrows) {
+    // Big5 bytes for "中文" are A4 A4 A4 E5 in Big5. These are not valid as UTF-8.
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    EXPECT_THROW({
+        auto out = utf8_to_big5(big5_bytes); // default: throw on decode error
+        (void)out;
+    }, std::runtime_error);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_BypassReturnsOriginal) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    auto out = utf8_to_big5(big5_bytes, BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, big5_bytes);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_DR_DefaultThrows) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    EXPECT_THROW({
+        auto out = utf8_to_big5_dr(big5_bytes); // default: throw on decode error
+        (void)out;
+    }, std::runtime_error);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_DR_BypassReturnsOriginal) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    auto out = utf8_to_big5_dr(big5_bytes, BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, big5_bytes);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_GenericConvert_DefaultThrows) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    EXPECT_THROW({
+        auto out = convert_encoding(std::string_view(big5_bytes), "UTF-8", "Big5");
+        (void)out;
+    }, std::runtime_error);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_GenericConvert_BypassReturnsOriginal) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    auto out = convert_encoding(std::string_view(big5_bytes), "UTF-8", "Big5", BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, big5_bytes);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_FromUtf8_DefaultThrows) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    EXPECT_THROW({
+        auto out = from_utf8(std::string_view(big5_bytes), "Big5");
+        (void)out;
+    }, std::runtime_error);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_FromUtf8_BypassReturnsOriginal) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    auto out = from_utf8(std::string_view(big5_bytes), "Big5", BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, big5_bytes);
+}
+
+TEST(DecodeBypassTest, MislabeledSource_ExplicitLength_Overloads) {
+    const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
+
+    // convert_encoding(const char*, size_t, ...)
+    EXPECT_THROW({
+        auto out = convert_encoding(big5_bytes.data(), big5_bytes.size(), "UTF-8", "Big5");
+        (void)out;
+    }, std::runtime_error);
+    auto out1 = convert_encoding(big5_bytes.data(), big5_bytes.size(), "UTF-8", "Big5", BypassOnDecodeError::Yes);
+    EXPECT_EQ(out1, big5_bytes);
+
+    // from_utf8(const char*, size_t, ...)
+    EXPECT_THROW({
+        auto out = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5");
+        (void)out;
+    }, std::runtime_error);
+    auto out2 = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5", BypassOnDecodeError::Yes);
+    EXPECT_EQ(out2, big5_bytes);
+}

@@ -137,43 +137,64 @@ int main() {
 }
 ```
 
+### Bypassing decode errors (optional)
+By default, all converters stop on invalid input and throw an exception. If you know that some inputs may be mislabeled (e.g., bytes are actually UTF-8 but the code path passes `"Big5"`), you can opt into a safe bypass that returns the original input unchanged when decoding fails:
+
+```cpp
+using namespace utf8ansi;
+
+std::string bytes = /* maybe mislabeled as Big5 */;
+// Try Big5 -> UTF-8, but if it isn't actually Big5, just return bytes unchanged.
+auto out = big5_to_utf8(bytes, BypassOnDecodeError::Yes);
+
+// Generic
+auto out2 = convert_encoding(bytes, "Big5", "UTF-8", BypassOnDecodeError::Yes);
+```
+
+Notes:
+- The bypass only applies to the decode step (source bytes -> UTF-16). If decoding succeeds, conversion proceeds normally.
+- Encode-side errors (UTF-16 -> destination bytes) still throw.
+
 ## API documentation
 All functions are free functions in the `utf8ansi` namespace.
 
-- `std::string convert_encoding(std::string_view input, std::string_view from_encoding, std::string_view to_encoding);`
+By default, functions throw on decode errors. You can opt into bypassing decode errors by passing the optional `BypassOnDecodeError` parameter (defaults to `BypassOnDecodeError::No`). When set to `Yes`, if the source bytes cannot be decoded to UTF‑16 using `from_encoding`, the function returns the original input bytes unchanged.
+
+- `std::string convert_encoding(std::string_view input, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
   - Convert bytes from `from_encoding` to `to_encoding`.
-- `std::string to_utf8(std::string_view input, std::string_view from_encoding);`
+- `std::string to_utf8(std::string_view input, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
   - Convert bytes from `from_encoding` to UTF-8.
-- `std::string from_utf8(std::string_view utf8, std::string_view to_encoding);`
+- `std::string from_utf8(std::string_view utf8, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
   - Convert UTF-8 bytes to `to_encoding`.
 - Big5 helpers:
-  - `std::string big5_to_utf8(std::string_view big5_bytes);`
-  - `std::string utf8_to_big5(std::string_view utf8);`
-  - `std::string big5_to_utf8_dr(std::string_view big5_bytes);` (streaming)
-  - `std::string utf8_to_big5_dr(std::string_view utf8);` (streaming)
+  - `std::string big5_to_utf8(std::string_view big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+  - `std::string utf8_to_big5(std::string_view utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+  - `std::string big5_to_utf8_dr(std::string_view big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+  - `std::string utf8_to_big5_dr(std::string_view utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
 - C-style overloads (null-terminated `const char*`):
   - Generic:
-    - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding);`
-    - `std::string to_utf8(const char* input, std::string_view from_encoding);`
-    - `std::string from_utf8(const char* utf8, std::string_view to_encoding);`
+    - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string to_utf8(const char* input, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string from_utf8(const char* utf8, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
   - Big5 helpers:
-    - `std::string big5_to_utf8(const char* big5_bytes);`
-    - `std::string utf8_to_big5(const char* utf8);`
-    - `std::string big5_to_utf8_dr(const char* big5_bytes);` (streaming)
-    - `std::string utf8_to_big5_dr(const char* utf8);` (streaming)
+    - `std::string big5_to_utf8(const char* big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string utf8_to_big5(const char* utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
 - C-style overloads with explicit length (non-null-terminated):
   - Generic:
-    - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding);`
-    - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding);`
-    - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding);`
+    - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
   - Big5 helpers:
-    - `std::string big5_to_utf8(const char* big5_bytes, std::size_t length);`
-    - `std::string utf8_to_big5(const char* utf8, std::size_t length);`
-    - `std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length);` (streaming)
-    - `std::string utf8_to_big5_dr(const char* utf8, std::size_t length);` (streaming)
+    - `std::string big5_to_utf8(const char* big5_bytes, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string utf8_to_big5(const char* utf8, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
 
 ### Error handling
 - All functions throw `std::runtime_error` on conversion errors. ICU converters are configured to STOP on errors (no silent substitution).
+- You may opt to bypass decode errors by passing `BypassOnDecodeError::Yes`; in that case, if decoding the source bytes fails because they don't match `from_encoding`, the function returns the original input unchanged.
 - For null-terminated C-string overloads (`const char*`), passing `nullptr` throws `std::invalid_argument`.
 - For explicit-length overloads (`const char* ptr, std::size_t len`):
   - If `ptr == nullptr` and `len == 0`, the functions return an empty string.

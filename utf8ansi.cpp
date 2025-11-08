@@ -106,7 +106,8 @@ struct UConverterHandle {
 std::string convert_encoding_impl(const char* input,
                                   const int32_t length,
                                   const std::string_view from_encoding,
-                                  const std::string_view to_encoding) {
+                                  const std::string_view to_encoding,
+                                  const BypassOnDecodeError bypass_on_decode_error) {
     if (input == nullptr) {
         if (length == 0) {
             return {};
@@ -121,12 +122,28 @@ std::string convert_encoding_impl(const char* input,
     UErrorCode status = U_ZERO_ERROR;
     const int32_t uLen = ucnv_toUChars(from.get(), nullptr, 0, input, length, &status);
     if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) {
+        if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+            if (length >= 0) {
+                return std::string(input, static_cast<std::size_t>(length));
+            } else {
+                const std::size_t len = std::char_traits<char>::length(input);
+                return std::string(input, len);
+            }
+        }
         throw std::runtime_error("ICU preflight toUChars failed for encoding: " + std::string(from_encoding));
     }
     status = U_ZERO_ERROR;
     std::vector<UChar> ubuf(static_cast<size_t>(uLen) + 1u);
     const int32_t uWritten = ucnv_toUChars(from.get(), ubuf.data(), uLen + 1, input, length, &status);
     if (U_FAILURE(status)) {
+        if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+            if (length >= 0) {
+                return std::string(input, static_cast<std::size_t>(length));
+            } else {
+                const std::size_t len = std::char_traits<char>::length(input);
+                return std::string(input, len);
+            }
+        }
         throw std::runtime_error("ICU toUChars failed for encoding: " + std::string(from_encoding));
     }
 
@@ -172,9 +189,20 @@ std::string convert_encoding_impl(const char* input,
 std::string convert_encoding_streaming(const std::string_view input,
                                               const std::string_view from_encoding,
                                               const std::string_view to_encoding,
-                                              const std::size_t initial_out_capacity) {
+                                              const std::size_t initial_out_capacity,
+                                              const BypassOnDecodeError bypass_on_decode_error) {
     if (input.data() == nullptr && !input.empty()) {
         throw std::invalid_argument("convert_encoding_streaming: input is null but size != 0");
+    }
+
+    // Optional preflight decode check: if decoding fails and bypass is requested, return original input
+    if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+        UErrorCode preStatus = U_ZERO_ERROR;
+        const UConverterHandle fromProbe(from_encoding);
+        ucnv_toUChars(fromProbe.get(), nullptr, 0, input.data(), safe_size_to_int32(input.size()), &preStatus);
+        if (preStatus != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(preStatus)) {
+            return std::string(input);
+        }
     }
 
     const UConverterHandle from(from_encoding);
@@ -244,118 +272,121 @@ std::string convert_encoding_streaming(const std::string_view input,
 
 std::string convert_encoding(const std::string_view input,
                              const std::string_view from_encoding,
-                             const std::string_view to_encoding) {
-    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, to_encoding);
+                             const std::string_view to_encoding,
+                             const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, to_encoding, bypass_on_decode_error);
 }
 
-std::string to_utf8(const std::string_view input, const std::string_view from_encoding) {
-    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, "UTF-8");
+std::string to_utf8(const std::string_view input, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, "UTF-8", bypass_on_decode_error);
 }
 
-std::string from_utf8(const std::string_view utf8, const std::string_view to_encoding) {
-    return convert_encoding_impl(utf8.data(), safe_size_to_int32(utf8.size()), "UTF-8", to_encoding);
+std::string from_utf8(const std::string_view utf8, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(utf8.data(), safe_size_to_int32(utf8.size()), "UTF-8", to_encoding, bypass_on_decode_error);
 }
 
-std::string big5_to_utf8(const std::string_view big5_bytes) {
-    return to_utf8(big5_bytes, "Big5");
+std::string big5_to_utf8(const std::string_view big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
+    return to_utf8(big5_bytes, "Big5", bypass_on_decode_error);
 }
 
-std::string utf8_to_big5(const std::string_view utf8) {
-    return from_utf8(utf8, "Big5");
+std::string utf8_to_big5(const std::string_view utf8, const BypassOnDecodeError bypass_on_decode_error) {
+    return from_utf8(utf8, "Big5", bypass_on_decode_error);
 }
 
-std::string big5_to_utf8_dr(const std::string_view big5_bytes) {
+std::string big5_to_utf8_dr(const std::string_view big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
     // Big5 bytes (1–2 per char) can expand up to ~3 bytes/char in UTF-8
     const std::size_t guess = safe_add(safe_multiply(big5_bytes.size(), 3u), 16u);
-    return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess);
+    return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess, bypass_on_decode_error);
 }
 
-std::string utf8_to_big5_dr(const std::string_view utf8) {
+std::string utf8_to_big5_dr(const std::string_view utf8, const BypassOnDecodeError bypass_on_decode_error) {
     // UTF-8 (1–4 bytes/char) maps to Big5 (1–2 bytes/char); allocate generously
     const std::size_t guess = safe_add(safe_multiply(utf8.size(), 2u), 16u);
-    return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess);
+    return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess, bypass_on_decode_error);
 }
 
 std::string convert_encoding(const char* input,
                              const std::string_view from_encoding,
-                             const std::string_view to_encoding) {
-    return convert_encoding_impl(input, -1, from_encoding, to_encoding);
+                             const std::string_view to_encoding,
+                             const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input, -1, from_encoding, to_encoding, bypass_on_decode_error);
 }
 
-std::string to_utf8(const char* input, const std::string_view from_encoding) {
-    return convert_encoding_impl(input, -1, from_encoding, "UTF-8");
+std::string to_utf8(const char* input, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input, -1, from_encoding, "UTF-8", bypass_on_decode_error);
 }
 
-std::string from_utf8(const char* utf8, const std::string_view to_encoding) {
-    return convert_encoding_impl(utf8, -1, "UTF-8", to_encoding);
+std::string from_utf8(const char* utf8, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(utf8, -1, "UTF-8", to_encoding, bypass_on_decode_error);
 }
 
 std::string convert_encoding(const char* input, const std::size_t length,
                              const std::string_view from_encoding,
-                             const std::string_view to_encoding) {
-    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, to_encoding);
+                             const std::string_view to_encoding,
+                             const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, to_encoding, bypass_on_decode_error);
 }
 
-std::string to_utf8(const char* input, const std::size_t length, const std::string_view from_encoding) {
-    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, "UTF-8");
+std::string to_utf8(const char* input, const std::size_t length, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, "UTF-8", bypass_on_decode_error);
 }
 
-std::string from_utf8(const char* utf8, const std::size_t length, const std::string_view to_encoding) {
-    return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding);
+std::string from_utf8(const char* utf8, const std::size_t length, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
+    return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding, bypass_on_decode_error);
 }
 
 // Big5 helpers (C-style, null-terminated)
-std::string big5_to_utf8(const char* big5_bytes) {
-    return to_utf8(big5_bytes, "Big5");
+std::string big5_to_utf8(const char* big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
+    return to_utf8(big5_bytes, "Big5", bypass_on_decode_error);
 }
 
-std::string utf8_to_big5(const char* utf8) {
-    return from_utf8(utf8, "Big5");
+std::string utf8_to_big5(const char* utf8, const BypassOnDecodeError bypass_on_decode_error) {
+    return from_utf8(utf8, "Big5", bypass_on_decode_error);
 }
 
-std::string big5_to_utf8_dr(const char* big5_bytes) {
+std::string big5_to_utf8_dr(const char* big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
     if (big5_bytes == nullptr) {
         throw std::invalid_argument("big5_to_utf8_dr: input is null");
     }
     const std::size_t len = std::char_traits<char>::length(big5_bytes);
     const std::size_t guess = safe_add(safe_multiply(len, 3u), 16u);
-    return convert_encoding_streaming(std::string_view(big5_bytes, len), "Big5", "UTF-8", guess);
+    return convert_encoding_streaming(std::string_view(big5_bytes, len), "Big5", "UTF-8", guess, bypass_on_decode_error);
 }
 
-std::string utf8_to_big5_dr(const char* utf8) {
+std::string utf8_to_big5_dr(const char* utf8, const BypassOnDecodeError bypass_on_decode_error) {
     if (utf8 == nullptr) {
         throw std::invalid_argument("utf8_to_big5_dr: input is null");
     }
     const std::size_t len = std::char_traits<char>::length(utf8);
     const std::size_t guess = safe_add(safe_multiply(len, 2u), 16u);
-    return convert_encoding_streaming(std::string_view(utf8, len), "UTF-8", "Big5", guess);
+    return convert_encoding_streaming(std::string_view(utf8, len), "UTF-8", "Big5", guess, bypass_on_decode_error);
 }
 
 // Big5 helpers (C-style with explicit length)
-std::string big5_to_utf8(const char* big5_bytes, const std::size_t length) {
-    return to_utf8(big5_bytes, length, "Big5");
+std::string big5_to_utf8(const char* big5_bytes, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
+    return to_utf8(big5_bytes, length, "Big5", bypass_on_decode_error);
 }
 
-std::string utf8_to_big5(const char* utf8, const std::size_t length) {
-    return from_utf8(utf8, length, "Big5");
+std::string utf8_to_big5(const char* utf8, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
+    return from_utf8(utf8, length, "Big5", bypass_on_decode_error);
 }
 
-std::string big5_to_utf8_dr(const char* big5_bytes, const std::size_t length) {
+std::string big5_to_utf8_dr(const char* big5_bytes, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
     if (big5_bytes == nullptr) {
         if (length == 0) return {};
         throw std::invalid_argument("big5_to_utf8_dr: input is null");
     }
     const std::size_t guess = safe_add(safe_multiply(length, 3u), 16u);
-    return convert_encoding_streaming(std::string_view(big5_bytes, length), "Big5", "UTF-8", guess);
+    return convert_encoding_streaming(std::string_view(big5_bytes, length), "Big5", "UTF-8", guess, bypass_on_decode_error);
 }
 
-std::string utf8_to_big5_dr(const char* utf8, const std::size_t length) {
+std::string utf8_to_big5_dr(const char* utf8, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
     if (utf8 == nullptr) {
         if (length == 0) return {};
         throw std::invalid_argument("utf8_to_big5_dr: input is null");
     }
     const std::size_t guess = safe_add(safe_multiply(length, 2u), 16u);
-    return convert_encoding_streaming(std::string_view(utf8, length), "UTF-8", "Big5", guess);
+    return convert_encoding_streaming(std::string_view(utf8, length), "UTF-8", "Big5", guess, bypass_on_decode_error);
 }
 
 } // namespace utf8ansi
