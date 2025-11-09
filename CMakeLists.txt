@@ -42,8 +42,9 @@ enable_testing()
 
 add_executable(utf8_ansi_cpp_tests
     tests/test_utf8_ansi.cpp
+    tests/test_main.cpp
 )
 
-target_link_libraries(utf8_ansi_cpp_tests PRIVATE utf8_ansi_cpp GTest::gtest_main spdlog::spdlog_header_only)
+target_link_libraries(utf8_ansi_cpp_tests PRIVATE utf8_ansi_cpp GTest::gtest spdlog::spdlog_header_only)
 
 add_test(NAME utf8_ansi_cpp_tests COMMAND utf8_ansi_cpp_tests)

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <vector>
 #include <spdlog/spdlog.h>
+#include "test_log_utils.h"
 
 using namespace utf8ansi;
 
@@ -461,4 +462,73 @@ TEST(DecodeBypassTest, MislabeledSource_ExplicitLength_Overloads) {
     }, std::runtime_error);
     auto out2 = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5", BypassOnDecodeError::Yes);
     EXPECT_EQ(out2, big5_bytes);
+
+    TEST_SUCCESS_REASON("Length overloads honor bypass and return original bytes");
+}
+
+// New: broaden coverage with multiple invalid/mislabeled byte sequences akin to sample sets
+TEST(DecodeBypassTest, MislabeledSource_VariousInvalidUtf8_AllApis) {
+    std::vector<std::string> samples = {
+        std::string("\xA4\x40", 2),                 // Big5 lead+trail for '一' (invalid as UTF-8)
+        std::string("\xA4\xA4\xA4\xE5", 4),       // Big5 bytes for "中文" (already tested)
+        std::string("\xC0\xAF", 2),                 // Overlong '/'
+        std::string("\x80", 1),                      // Lone continuation
+        std::string("\xBF", 1),                      // Lone continuation (upper range)
+        std::string("\xC2", 1),                      // Truncated 2-byte start
+        std::string("\xE4\xB8", 2),                  // Truncated 3-byte start (part of 中文)
+        std::string("\xF0\x9F\x98", 3),            // Truncated 4-byte start (emoji partial)
+        std::string("\xF8\x88\x80\x80\x80", 5),  // Invalid 5-byte start (obsolete)
+        std::string("\xFC\x84\x80\x80\x80\x80", 6), // Invalid 6-byte start (obsolete)
+        std::string("\x00\xA4", 2),                 // NUL followed by invalid 0xA4 as lead byte in UTF-8
+        std::string("\xED\xA0\x80", 3)             // UTF-16 surrogate U+D800 encoded in UTF-8 (invalid per UTF-8)
+    };
+
+    for (const auto& s : samples) {
+        // Default behavior: throw on decode error
+        EXPECT_THROW({ auto out = utf8_to_big5(s); (void)out; }, std::runtime_error);
+        EXPECT_THROW({ auto out = utf8_to_big5_dr(s); (void)out; }, std::runtime_error);
+        EXPECT_THROW({ auto out = convert_encoding(std::string_view(s), "UTF-8", "Big5"); (void)out; }, std::runtime_error);
+        EXPECT_THROW({ auto out = from_utf8(std::string_view(s), "Big5"); (void)out; }, std::runtime_error);
+
+        // Bypass mode: return original bytes unchanged
+        EXPECT_EQ(utf8_to_big5(s, BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(utf8_to_big5_dr(s, BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(convert_encoding(std::string_view(s), "UTF-8", "Big5", BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(from_utf8(std::string_view(s), "Big5", BypassOnDecodeError::Yes), s);
+    }
+
+    TEST_SUCCESS_REASON("All invalid UTF-8 samples (count=" + std::to_string(samples.size()) + ") honored bypass policy across APIs");
+}
+
+TEST(DecodeBypassTest, MislabeledSource_VariousInvalidUtf8_LengthOverloads) {
+    std::vector<std::string> samples = {
+        std::string("\xA4\x40", 2),
+        std::string("\xA4\xA4\xA4\xE5", 4),
+        std::string("\xC0\xAF", 2),
+        std::string("\x80", 1),
+        std::string("\xBF", 1),
+        std::string("\xC2", 1),
+        std::string("\xE4\xB8", 2),
+        std::string("\xF0\x9F\x98", 3),
+        std::string("\xF8\x88\x80\x80\x80", 5),
+        std::string("\xFC\x84\x80\x80\x80\x80", 6),
+        std::string("\x00\xA4", 2),
+        std::string("\xED\xA0\x80", 3)
+    };
+
+    for (const auto& s : samples) {
+        const char* data = s.data();
+        const size_t len = s.size();
+        EXPECT_THROW({ auto out = convert_encoding(data, len, "UTF-8", "Big5"); (void)out; }, std::runtime_error);
+        EXPECT_EQ(convert_encoding(data, len, "UTF-8", "Big5", BypassOnDecodeError::Yes), s);
+
+        EXPECT_THROW({ auto out = from_utf8(data, len, "Big5"); (void)out; }, std::runtime_error);
+        EXPECT_EQ(from_utf8(data, len, "Big5", BypassOnDecodeError::Yes), s);
+
+        // Where available, also test DR length overloads
+        EXPECT_THROW({ auto out = utf8_to_big5_dr(data, len); (void)out; }, std::runtime_error);
+        EXPECT_EQ(utf8_to_big5_dr(data, len, BypassOnDecodeError::Yes), s);
+    }
+
+    TEST_SUCCESS_REASON("Explicit-length overloads honored bypass on all " + std::to_string(samples.size()) + " samples");
 }
