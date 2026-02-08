@@ -44,14 +44,14 @@ This repository is set up as a CMake project exposing a library target named `ut
 Example CMake invocation (generic):
 
 ```
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --fresh -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target utf8_ansi_cpp
 ```
 
 If ICU is installed in a non-standard prefix, add:
 
 ```
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/icu/prefix
+cmake --fresh -S . -B build -DCMAKE_PREFIX_PATH=/path/to/icu/prefix
 ```
 
 ## Install
@@ -62,14 +62,14 @@ Option A: set the install prefix at configure time:
 ```
 export MY_INSTALL_DIR=$HOME/.local
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$MY_INSTALL_DIR
+cmake --fresh -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$MY_INSTALL_DIR
 cmake --build build --target utf8_ansi_cpp
 cmake --install build
 ```
 
 Option B: specify the prefix at install time:
 ```
-cmake --build build --target utf8_ansi_cpp
+cmake --fresh --build build --target utf8_ansi_cpp
 cmake --install build --prefix /usr/local
 ```
 
