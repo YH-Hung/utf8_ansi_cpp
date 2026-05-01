@@ -392,7 +392,7 @@ TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_Defau
 TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_BypassReturnsOriginal) {
     const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
 
-    auto out = utf8_to_big5(big5_bytes, BypassOnDecodeError::Yes);
+    auto out = utf8_to_big5(big5_bytes, InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, big5_bytes);
 }
 
@@ -408,7 +408,7 @@ TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_DR_De
 TEST(DecodeBypassTest, MislabeledSource_Big5Bytes_TreatedAsUTF8_Utf8ToBig5_DR_BypassReturnsOriginal) {
     const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
 
-    auto out = utf8_to_big5_dr(big5_bytes, BypassOnDecodeError::Yes);
+    auto out = utf8_to_big5_dr(big5_bytes, InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, big5_bytes);
 }
 
@@ -424,7 +424,7 @@ TEST(DecodeBypassTest, MislabeledSource_GenericConvert_DefaultThrows) {
 TEST(DecodeBypassTest, MislabeledSource_GenericConvert_BypassReturnsOriginal) {
     const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
 
-    auto out = convert_encoding(std::string_view(big5_bytes), "UTF-8", "Big5", BypassOnDecodeError::Yes);
+    auto out = convert_encoding(std::string_view(big5_bytes), "UTF-8", "Big5", InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, big5_bytes);
 }
 
@@ -440,7 +440,7 @@ TEST(DecodeBypassTest, MislabeledSource_FromUtf8_DefaultThrows) {
 TEST(DecodeBypassTest, MislabeledSource_FromUtf8_BypassReturnsOriginal) {
     const std::string big5_bytes = std::string("\xA4\xA4\xA4\xE5", 4);
 
-    auto out = from_utf8(std::string_view(big5_bytes), "Big5", BypassOnDecodeError::Yes);
+    auto out = from_utf8(std::string_view(big5_bytes), "Big5", InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, big5_bytes);
 }
 
@@ -452,7 +452,7 @@ TEST(DecodeBypassTest, MislabeledSource_ExplicitLength_Overloads) {
         auto out = convert_encoding(big5_bytes.data(), big5_bytes.size(), "UTF-8", "Big5");
         (void)out;
     }, std::runtime_error);
-    auto out1 = convert_encoding(big5_bytes.data(), big5_bytes.size(), "UTF-8", "Big5", BypassOnDecodeError::Yes);
+    auto out1 = convert_encoding(big5_bytes.data(), big5_bytes.size(), "UTF-8", "Big5", InvalidCharPolicy::Bypass);
     EXPECT_EQ(out1, big5_bytes);
 
     // from_utf8(const char*, size_t, ...)
@@ -460,7 +460,7 @@ TEST(DecodeBypassTest, MislabeledSource_ExplicitLength_Overloads) {
         auto out = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5");
         (void)out;
     }, std::runtime_error);
-    auto out2 = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5", BypassOnDecodeError::Yes);
+    auto out2 = from_utf8(big5_bytes.data(), big5_bytes.size(), "Big5", InvalidCharPolicy::Bypass);
     EXPECT_EQ(out2, big5_bytes);
 
     TEST_SUCCESS_REASON("Length overloads honor bypass and return original bytes");
@@ -491,10 +491,10 @@ TEST(DecodeBypassTest, MislabeledSource_VariousInvalidUtf8_AllApis) {
         EXPECT_THROW({ auto out = from_utf8(std::string_view(s), "Big5"); (void)out; }, std::runtime_error);
 
         // Bypass mode: return original bytes unchanged
-        EXPECT_EQ(utf8_to_big5(s, BypassOnDecodeError::Yes), s);
-        EXPECT_EQ(utf8_to_big5_dr(s, BypassOnDecodeError::Yes), s);
-        EXPECT_EQ(convert_encoding(std::string_view(s), "UTF-8", "Big5", BypassOnDecodeError::Yes), s);
-        EXPECT_EQ(from_utf8(std::string_view(s), "Big5", BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(utf8_to_big5(s, InvalidCharPolicy::Bypass), s);
+        EXPECT_EQ(utf8_to_big5_dr(s, InvalidCharPolicy::Bypass), s);
+        EXPECT_EQ(convert_encoding(std::string_view(s), "UTF-8", "Big5", InvalidCharPolicy::Bypass), s);
+        EXPECT_EQ(from_utf8(std::string_view(s), "Big5", InvalidCharPolicy::Bypass), s);
     }
 
     TEST_SUCCESS_REASON("All invalid UTF-8 samples (count=" + std::to_string(samples.size()) + ") honored bypass policy across APIs");
@@ -520,14 +520,14 @@ TEST(DecodeBypassTest, MislabeledSource_VariousInvalidUtf8_LengthOverloads) {
         const char* data = s.data();
         const size_t len = s.size();
         EXPECT_THROW({ auto out = convert_encoding(data, len, "UTF-8", "Big5"); (void)out; }, std::runtime_error);
-        EXPECT_EQ(convert_encoding(data, len, "UTF-8", "Big5", BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(convert_encoding(data, len, "UTF-8", "Big5", InvalidCharPolicy::Bypass), s);
 
         EXPECT_THROW({ auto out = from_utf8(data, len, "Big5"); (void)out; }, std::runtime_error);
-        EXPECT_EQ(from_utf8(data, len, "Big5", BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(from_utf8(data, len, "Big5", InvalidCharPolicy::Bypass), s);
 
         // Where available, also test DR length overloads
         EXPECT_THROW({ auto out = utf8_to_big5_dr(data, len); (void)out; }, std::runtime_error);
-        EXPECT_EQ(utf8_to_big5_dr(data, len, BypassOnDecodeError::Yes), s);
+        EXPECT_EQ(utf8_to_big5_dr(data, len, InvalidCharPolicy::Bypass), s);
     }
 
     TEST_SUCCESS_REASON("Explicit-length overloads honored bypass on all " + std::to_string(samples.size()) + " samples");
@@ -545,8 +545,8 @@ TEST(SkipIfAlreadyTargetTest, AsciiInput_AlreadyValidInTarget_ReturnedUnchanged)
     // target encoding should succeed and the transform should be skipped.
     const std::string s = "Hello, 123!";
 
-    auto out_utf8_to_big5 = convert_encoding(std::string_view(s), "UTF-8", "Big5", BypassOnDecodeError::Yes);
-    auto out_big5_to_utf8 = convert_encoding(std::string_view(s), "Big5", "UTF-8", BypassOnDecodeError::Yes);
+    auto out_utf8_to_big5 = convert_encoding(std::string_view(s), "UTF-8", "Big5", InvalidCharPolicy::Bypass);
+    auto out_big5_to_utf8 = convert_encoding(std::string_view(s), "Big5", "UTF-8", InvalidCharPolicy::Bypass);
 
     // For pure ASCII the transformed output equals the input regardless, but the
     // assertion still proves the path is correct (and exercises the skip branch).
@@ -561,7 +561,7 @@ TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_BypassReturnsOri
     // (This is the inverse of MislabeledSource_Big5Bytes_TreatedAsUTF8_*.)
     const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
 
-    auto out = big5_to_utf8(utf8_chinese, BypassOnDecodeError::Yes);
+    auto out = big5_to_utf8(utf8_chinese, InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, utf8_chinese);
     TEST_SUCCESS_REASON("UTF-8 bytes mislabeled as Big5 are detected as already-UTF-8 and returned unchanged");
 }
@@ -569,7 +569,7 @@ TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_BypassReturnsOri
 TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_DR_BypassReturnsOriginal) {
     const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
 
-    auto out = big5_to_utf8_dr(utf8_chinese, BypassOnDecodeError::Yes);
+    auto out = big5_to_utf8_dr(utf8_chinese, InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, utf8_chinese);
     TEST_SUCCESS_REASON("Streaming variant honors upfront target-encoding skip");
 }
@@ -577,7 +577,7 @@ TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_DR_BypassReturns
 TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_GenericConvert_BypassReturnsOriginal) {
     const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
 
-    auto out = convert_encoding(std::string_view(utf8_chinese), "Big5", "UTF-8", BypassOnDecodeError::Yes);
+    auto out = convert_encoding(std::string_view(utf8_chinese), "Big5", "UTF-8", InvalidCharPolicy::Bypass);
     EXPECT_EQ(out, utf8_chinese);
     TEST_SUCCESS_REASON("convert_encoding honors upfront target-encoding skip");
 }
@@ -589,8 +589,8 @@ TEST(SkipIfAlreadyTargetTest, ValidInputUnderBypass_StillTransformsCorrectly) {
     // fire and a real transform must run. Round-trip must be preserved.
     const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
 
-    auto big5 = utf8_to_big5(utf8_chinese, BypassOnDecodeError::Yes);
-    auto round = big5_to_utf8(big5, BypassOnDecodeError::Yes);
+    auto big5 = utf8_to_big5(utf8_chinese, InvalidCharPolicy::Bypass);
+    auto round = big5_to_utf8(big5, InvalidCharPolicy::Bypass);
     EXPECT_NE(big5, utf8_chinese); // proves a real transform happened
     EXPECT_EQ(round, utf8_chinese);
     TEST_SUCCESS_REASON("Bypass=Yes does not short-circuit valid transforms; round-trip preserved");
@@ -601,9 +601,121 @@ TEST(SkipIfAlreadyTargetTest, GarbageBytes_FallsBackToTier2_ReturnsOriginal) {
     // unchanged via the Tier-2 fallback (preserves existing contract).
     const std::string garbage = std::string("\xFF\xFE", 2); // invalid as UTF-8 first byte
 
-    auto out_utf8_to_big5 = utf8_to_big5(garbage, BypassOnDecodeError::Yes);
-    auto out_dr = utf8_to_big5_dr(garbage, BypassOnDecodeError::Yes);
+    auto out_utf8_to_big5 = utf8_to_big5(garbage, InvalidCharPolicy::Bypass);
+    auto out_dr = utf8_to_big5_dr(garbage, InvalidCharPolicy::Bypass);
     EXPECT_EQ(out_utf8_to_big5, garbage);
     EXPECT_EQ(out_dr, garbage);
     TEST_SUCCESS_REASON("Tier-2 fallback still returns garbage bytes unchanged under bypass");
+}
+
+// --- Tests for InvalidCharPolicy::{Substitute, Skip, Escape} ---
+//
+// These cover the three new ICU-callback-backed modes added by the refactor.
+// Each mode is exercised on both directions:
+//   - encode side: utf8_to_big5 with an emoji (not representable in Big5)
+//   - decode side: to_utf8 from "UTF-8" of bytes that aren't valid UTF-8
+// Plus a Throw-default sanity check and a Streaming (DR) parity check.
+//
+// Notes on ICU's default outputs (with nullptr context):
+//   - SUBSTITUTE on decode side -> U+FFFD (UTF-8 EF BF BD)
+//   - SUBSTITUTE on encode side -> the converter's substitution sequence
+//     (Big5 uses 0x3F i.e. ASCII '?')
+//   - SKIP on either side       -> offending unit dropped, no replacement
+//   - ESCAPE on either side     -> textual escape, default styles begin with
+//     '%U' (from UTF-16 code units) or '%X' (from raw bytes).
+//   These are stable across modern ICU releases; the tests assert structural
+//   properties rather than exact escape strings to remain robust.
+
+TEST(InvalidCharPolicyTest, Throw_IsTheDefault) {
+    const std::string s = "中文";
+    EXPECT_EQ(utf8_to_big5(s), utf8_to_big5(s, InvalidCharPolicy::Throw));
+    TEST_SUCCESS_REASON("Explicit InvalidCharPolicy::Throw matches the default behavior");
+}
+
+TEST(InvalidCharPolicyTest, Substitute_DecodeSide_InvalidUtf8YieldsReplacementChar) {
+    // Overlong '/' (0xC0 0xAF) is invalid UTF-8.
+    const std::string invalid = std::string("\xC0\xAF", 2);
+    const std::string out = to_utf8(invalid, "UTF-8", InvalidCharPolicy::Substitute);
+    // Should not throw; should contain ICU's replacement-character output (U+FFFD).
+    const std::string replacement = std::string("\xEF\xBF\xBD", 3);
+    EXPECT_NE(out.find(replacement), std::string::npos)
+        << "expected U+FFFD in output, got: " << bytes_to_hex(out);
+}
+
+TEST(InvalidCharPolicyTest, Substitute_EncodeSide_EmojiBecomesBig5Substitution) {
+    // Emoji is not representable in Big5; SUBSTITUTE replaces it with the
+    // converter's substitution character (Big5 -> 0x3F == '?').
+    const std::string with_emoji = "你好😀";
+    const std::string just_prefix = "你好";
+
+    const std::string out = utf8_to_big5(with_emoji, InvalidCharPolicy::Substitute);
+    const std::string prefix_big5 = utf8_to_big5(just_prefix);
+
+    ASSERT_GT(out.size(), prefix_big5.size())
+        << "substituted output should be at least one byte longer than the prefix";
+    EXPECT_EQ(out.substr(0, prefix_big5.size()), prefix_big5);
+    // Remaining bytes are the substitution sequence - non-empty.
+    const std::string sub = out.substr(prefix_big5.size());
+    EXPECT_FALSE(sub.empty());
+    spdlog::info("substitute encode: out={} sub_bytes={}", bytes_to_hex(out), bytes_to_hex(sub));
+}
+
+TEST(InvalidCharPolicyTest, Skip_DecodeSide_InvalidBytesAreDropped) {
+    // Valid UTF-8 surrounded by an invalid sequence; SKIP should drop the bad
+    // unit and keep the rest.
+    // "A" (0x41) + invalid (0xC0 0xAF) + "B" (0x42)
+    const std::string mixed = std::string("A\xC0\xAF" "B", 4);
+    const std::string out = to_utf8(mixed, "UTF-8", InvalidCharPolicy::Skip);
+    EXPECT_EQ(out, std::string("AB"));
+}
+
+TEST(InvalidCharPolicyTest, Skip_EncodeSide_EmojiIsDropped) {
+    const std::string with_emoji = "你好😀";
+    const std::string just_prefix = "你好";
+
+    const std::string out = utf8_to_big5(with_emoji, InvalidCharPolicy::Skip);
+    EXPECT_EQ(out, utf8_to_big5(just_prefix));
+}
+
+TEST(InvalidCharPolicyTest, Escape_DecodeSide_InvalidBytesBecomeEscape) {
+    const std::string invalid = std::string("\xC0\xAF", 2);
+    const std::string out = to_utf8(invalid, "UTF-8", InvalidCharPolicy::Escape);
+    // ICU's default toU escape style emits ASCII text starting with '%X' for
+    // each problematic byte. We assert structurally rather than by exact bytes.
+    EXPECT_FALSE(out.empty());
+    EXPECT_NE(out.find('%'), std::string::npos)
+        << "expected escape marker '%' in output, got: " << bytes_to_hex(out);
+    spdlog::info("escape decode: out={}", bytes_to_hex(out));
+}
+
+TEST(InvalidCharPolicyTest, Escape_EncodeSide_EmojiBecomesEscape) {
+    const std::string emoji_only = "😀";
+    const std::string out = utf8_to_big5(emoji_only, InvalidCharPolicy::Escape);
+    // ICU's default fromU escape style emits '%U' followed by hex code units;
+    // it MUST contain at least one '%' marker and MUST NOT be empty.
+    EXPECT_FALSE(out.empty());
+    EXPECT_NE(out.find('%'), std::string::npos)
+        << "expected escape marker '%' in output, got: " << bytes_to_hex(out);
+    spdlog::info("escape encode: out={}", bytes_to_hex(out));
+}
+
+TEST(InvalidCharPolicyTest, Streaming_DR_HonorsAllThreeModes) {
+    const std::string with_emoji = "你好😀";
+    const std::string just_prefix = "你好";
+
+    // Skip via DR: emoji dropped.
+    EXPECT_EQ(utf8_to_big5_dr(with_emoji, InvalidCharPolicy::Skip),
+              utf8_to_big5_dr(just_prefix));
+
+    // Substitute via DR: prefix preserved, then a non-empty substitution.
+    const std::string sub_out = utf8_to_big5_dr(with_emoji, InvalidCharPolicy::Substitute);
+    const std::string prefix_big5 = utf8_to_big5_dr(just_prefix);
+    ASSERT_GT(sub_out.size(), prefix_big5.size());
+    EXPECT_EQ(sub_out.substr(0, prefix_big5.size()), prefix_big5);
+
+    // Escape via DR: contains the '%' marker.
+    const std::string esc_out = utf8_to_big5_dr(with_emoji, InvalidCharPolicy::Escape);
+    EXPECT_NE(esc_out.find('%'), std::string::npos);
+
+    TEST_SUCCESS_REASON("Streaming converter honors Substitute / Skip / Escape policies");
 }

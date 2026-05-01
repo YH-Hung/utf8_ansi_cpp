@@ -8,6 +8,7 @@
 #include <limits>
 
 #include <unicode/ucnv.h>
+#include <unicode/ucnv_err.h>
 
 namespace utf8ansi {
 
@@ -58,38 +59,62 @@ bool is_decodable_as(UConverter* cnv, const char* data, int32_t len) {
     return ok;
 }
 
+// Resolve the policy to a (toU, fromU) pair of ICU callback function pointers.
+// Both Throw and Bypass install STOP at the ICU layer; Bypass adds a
+// higher-level fallback in the impl/streaming functions.
+struct CallbackPair {
+    UConverterToUCallback to_u;
+    UConverterFromUCallback from_u;
+};
+
+CallbackPair callbacks_for(InvalidCharPolicy policy) {
+    switch (policy) {
+        case InvalidCharPolicy::Throw:
+        case InvalidCharPolicy::Bypass:
+            return {UCNV_TO_U_CALLBACK_STOP, UCNV_FROM_U_CALLBACK_STOP};
+        case InvalidCharPolicy::Substitute:
+            return {UCNV_TO_U_CALLBACK_SUBSTITUTE, UCNV_FROM_U_CALLBACK_SUBSTITUTE};
+        case InvalidCharPolicy::Skip:
+            return {UCNV_TO_U_CALLBACK_SKIP, UCNV_FROM_U_CALLBACK_SKIP};
+        case InvalidCharPolicy::Escape:
+            return {UCNV_TO_U_CALLBACK_ESCAPE, UCNV_FROM_U_CALLBACK_ESCAPE};
+    }
+    return {UCNV_TO_U_CALLBACK_STOP, UCNV_FROM_U_CALLBACK_STOP};
+}
+
 struct UConverterHandle {
     // RAII holder for an ICU UConverter (character set converter).
     // - Acquires the converter in the constructor using an ICU encoding name or alias.
-    // - Configures both "to Unicode" and "from Unicode" callbacks to STOP on errors,
-    //   so invalid sequences cause an immediate failure instead of silent substitution.
+    // - Configures both "to Unicode" and "from Unicode" callbacks per the supplied
+    //   InvalidCharPolicy (defaults to STOP, matching the Throw / Bypass modes).
     // - Releases the converter in the destructor.
     //
     // Usage: create as an automatic (stack) variable and pass get() to ICU APIs.
     // Thread-safety: do not share a single UConverter across threads.
     UConverter* conv{nullptr};
-    
+
     // Delete copy and move operations to prevent accidental copying/moving
     UConverterHandle(const UConverterHandle&) = delete;
     UConverterHandle& operator=(const UConverterHandle&) = delete;
     UConverterHandle(UConverterHandle&&) = delete;
     UConverterHandle& operator=(UConverterHandle&&) = delete;
-    explicit UConverterHandle(const std::string_view name) {
+    explicit UConverterHandle(const std::string_view name,
+                              const InvalidCharPolicy policy = InvalidCharPolicy::Throw) {
         UErrorCode status = U_ZERO_ERROR;
         conv = ucnv_open(std::string(name).c_str(), &status);
         if (U_FAILURE(status) || conv == nullptr) {
             throw std::runtime_error("Failed to open ICU converter: " + std::string(name));
         }
-        // Configure ICU to stop on conversion errors (no substitution/leniency).
+        const CallbackPair cbs = callbacks_for(policy);
         UErrorCode s2 = U_ZERO_ERROR;
-        ucnv_setToUCallBack(conv, UCNV_TO_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
+        ucnv_setToUCallBack(conv, cbs.to_u, nullptr, nullptr, nullptr, &s2);
         if (U_FAILURE(s2)) {
-            throw std::runtime_error("Failed to set ICU TO-UNICODE callback to STOP for: " + std::string(name));
+            throw std::runtime_error("Failed to set ICU TO-UNICODE callback for: " + std::string(name));
         }
         s2 = U_ZERO_ERROR;
-        ucnv_setFromUCallBack(conv, UCNV_FROM_U_CALLBACK_STOP, nullptr, nullptr, nullptr, &s2);
+        ucnv_setFromUCallBack(conv, cbs.from_u, nullptr, nullptr, nullptr, &s2);
         if (U_FAILURE(s2)) {
-            throw std::runtime_error("Failed to set ICU FROM-UNICODE callback to STOP for: " + std::string(name));
+            throw std::runtime_error("Failed to set ICU FROM-UNICODE callback for: " + std::string(name));
         }
     }
     ~UConverterHandle() {
@@ -109,16 +134,17 @@ struct UConverterHandle {
  * - length: number of bytes in input. Use -1 to indicate NUL-terminated input (ICU convention).
  * - from_encoding: ICU canonical or alias name of the source encoding.
  * - to_encoding: ICU canonical or alias name of the destination encoding.
+ * - policy: how to handle invalid characters. See InvalidCharPolicy in the header.
  *
  * Throws std::invalid_argument if input is null.
- * Throws std::runtime_error on ICU errors during either phase.
+ * Throws std::runtime_error on ICU errors during either phase (Throw / Bypass on encode side).
  * Returns the converted bytes without a terminating NUL.
  */
 std::string convert_encoding_impl(const char* input,
                                   const int32_t length,
                                   const std::string_view from_encoding,
                                   const std::string_view to_encoding,
-                                  const BypassOnDecodeError bypass_on_decode_error) {
+                                  const InvalidCharPolicy policy) {
     if (input == nullptr) {
         if (length == 0) {
             return {};
@@ -126,12 +152,12 @@ std::string convert_encoding_impl(const char* input,
         throw std::invalid_argument("convert_encoding: input is null");
     }
 
-    const UConverterHandle from(from_encoding);
-    const UConverterHandle to(to_encoding);
+    const UConverterHandle from(from_encoding, policy);
+    const UConverterHandle to(to_encoding, policy);
 
-    // Tier 1 upfront check: if bypass requested and source bytes are already valid in
+    // Tier 1 upfront check: if Bypass requested and source bytes are already valid in
     // to_encoding, skip the transform entirely and return them unchanged.
-    if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+    if (policy == InvalidCharPolicy::Bypass) {
         if (is_decodable_as(to.get(), input, length)) {
             if (length >= 0) {
                 return std::string(input, static_cast<std::size_t>(length));
@@ -144,7 +170,7 @@ std::string convert_encoding_impl(const char* input,
     UErrorCode status = U_ZERO_ERROR;
     const int32_t uLen = ucnv_toUChars(from.get(), nullptr, 0, input, length, &status);
     if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) {
-        if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+        if (policy == InvalidCharPolicy::Bypass) {
             if (length >= 0) {
                 return std::string(input, static_cast<std::size_t>(length));
             } else {
@@ -158,7 +184,7 @@ std::string convert_encoding_impl(const char* input,
     std::vector<UChar> ubuf(static_cast<size_t>(uLen) + 1u);
     const int32_t uWritten = ucnv_toUChars(from.get(), ubuf.data(), uLen + 1, input, length, &status);
     if (U_FAILURE(status)) {
-        if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+        if (policy == InvalidCharPolicy::Bypass) {
             if (length >= 0) {
                 return std::string(input, static_cast<std::size_t>(length));
             } else {
@@ -194,33 +220,35 @@ std::string convert_encoding_impl(const char* input,
 /**
  * Streaming conversion using ICU ucnv_convertEx to avoid allocating a full UTF-16 buffer.
  *
- * This function converts incrementally through a small UTF-16 pivot buffer, growing the
- * output buffer as needed. Converters are configured to STOP on errors; any invalid input
- * results in an exception rather than silent substitution.
+ * Converts incrementally through a small UTF-16 pivot buffer, growing the output buffer
+ * as needed. Converters are configured per the InvalidCharPolicy. For Throw (and Bypass
+ * past the upfront probes) any ICU error becomes a std::runtime_error; for Substitute /
+ * Skip / Escape, ICU never reports U_FAILURE because the callback handles invalid units.
  *
  * Parameters:
  * - input: the source bytes to convert.
  * - from_encoding: ICU name (canonical or alias) of the source encoding.
  * - to_encoding: ICU name (canonical or alias) of the target encoding.
- * - initial_out_capacity: heuristic initial size for the output buffer; it will expand if required.
+ * - initial_out_capacity: heuristic initial size for the output buffer; expands if needed.
+ * - policy: how to handle invalid characters. See InvalidCharPolicy in the header.
  *
  * Returns the converted bytes.
  * Throws std::invalid_argument if input.data() is null while input.size() != 0.
- * Throws std::runtime_error on ICU conversion errors.
+ * Throws std::runtime_error on ICU conversion errors (Throw / Bypass on encode side).
  */
 std::string convert_encoding_streaming(const std::string_view input,
                                               const std::string_view from_encoding,
                                               const std::string_view to_encoding,
                                               const std::size_t initial_out_capacity,
-                                              const BypassOnDecodeError bypass_on_decode_error) {
+                                              const InvalidCharPolicy policy) {
     if (input.data() == nullptr && !input.empty()) {
         throw std::invalid_argument("convert_encoding_streaming: input is null but size != 0");
     }
 
-    const UConverterHandle from(from_encoding);
-    const UConverterHandle to(to_encoding);
+    const UConverterHandle from(from_encoding, policy);
+    const UConverterHandle to(to_encoding, policy);
 
-    if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+    if (policy == InvalidCharPolicy::Bypass) {
         const int32_t inLen = safe_size_to_int32(input.size());
         // Tier 1 upfront check: source already valid in to_encoding -> skip transform.
         if (is_decodable_as(to.get(), input.data(), inLen)) {
@@ -297,120 +325,120 @@ std::string convert_encoding_streaming(const std::string_view input,
 std::string convert_encoding(const std::string_view input,
                              const std::string_view from_encoding,
                              const std::string_view to_encoding,
-                             const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, to_encoding, bypass_on_decode_error);
+                             const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, to_encoding, policy);
 }
 
-std::string to_utf8(const std::string_view input, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, "UTF-8", bypass_on_decode_error);
+std::string to_utf8(const std::string_view input, const std::string_view from_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input.data(), safe_size_to_int32(input.size()), from_encoding, "UTF-8", policy);
 }
 
-std::string from_utf8(const std::string_view utf8, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(utf8.data(), safe_size_to_int32(utf8.size()), "UTF-8", to_encoding, bypass_on_decode_error);
+std::string from_utf8(const std::string_view utf8, const std::string_view to_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(utf8.data(), safe_size_to_int32(utf8.size()), "UTF-8", to_encoding, policy);
 }
 
-std::string big5_to_utf8(const std::string_view big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
-    return to_utf8(big5_bytes, "Big5", bypass_on_decode_error);
+std::string big5_to_utf8(const std::string_view big5_bytes, const InvalidCharPolicy policy) {
+    return to_utf8(big5_bytes, "Big5", policy);
 }
 
-std::string utf8_to_big5(const std::string_view utf8, const BypassOnDecodeError bypass_on_decode_error) {
-    return from_utf8(utf8, "Big5", bypass_on_decode_error);
+std::string utf8_to_big5(const std::string_view utf8, const InvalidCharPolicy policy) {
+    return from_utf8(utf8, "Big5", policy);
 }
 
-std::string big5_to_utf8_dr(const std::string_view big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
+std::string big5_to_utf8_dr(const std::string_view big5_bytes, const InvalidCharPolicy policy) {
     // Big5 bytes (1–2 per char) can expand up to ~3 bytes/char in UTF-8
     const std::size_t guess = safe_add(safe_multiply(big5_bytes.size(), 3u), 16u);
-    return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(big5_bytes, "Big5", "UTF-8", guess, policy);
 }
 
-std::string utf8_to_big5_dr(const std::string_view utf8, const BypassOnDecodeError bypass_on_decode_error) {
+std::string utf8_to_big5_dr(const std::string_view utf8, const InvalidCharPolicy policy) {
     // UTF-8 (1–4 bytes/char) maps to Big5 (1–2 bytes/char); allocate generously
     const std::size_t guess = safe_add(safe_multiply(utf8.size(), 2u), 16u);
-    return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(utf8, "UTF-8", "Big5", guess, policy);
 }
 
 std::string convert_encoding(const char* input,
                              const std::string_view from_encoding,
                              const std::string_view to_encoding,
-                             const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input, -1, from_encoding, to_encoding, bypass_on_decode_error);
+                             const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input, -1, from_encoding, to_encoding, policy);
 }
 
-std::string to_utf8(const char* input, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input, -1, from_encoding, "UTF-8", bypass_on_decode_error);
+std::string to_utf8(const char* input, const std::string_view from_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input, -1, from_encoding, "UTF-8", policy);
 }
 
-std::string from_utf8(const char* utf8, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(utf8, -1, "UTF-8", to_encoding, bypass_on_decode_error);
+std::string from_utf8(const char* utf8, const std::string_view to_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(utf8, -1, "UTF-8", to_encoding, policy);
 }
 
 std::string convert_encoding(const char* input, const std::size_t length,
                              const std::string_view from_encoding,
                              const std::string_view to_encoding,
-                             const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, to_encoding, bypass_on_decode_error);
+                             const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, to_encoding, policy);
 }
 
-std::string to_utf8(const char* input, const std::size_t length, const std::string_view from_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, "UTF-8", bypass_on_decode_error);
+std::string to_utf8(const char* input, const std::size_t length, const std::string_view from_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(input, safe_size_to_int32(length), from_encoding, "UTF-8", policy);
 }
 
-std::string from_utf8(const char* utf8, const std::size_t length, const std::string_view to_encoding, const BypassOnDecodeError bypass_on_decode_error) {
-    return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding, bypass_on_decode_error);
+std::string from_utf8(const char* utf8, const std::size_t length, const std::string_view to_encoding, const InvalidCharPolicy policy) {
+    return convert_encoding_impl(utf8, safe_size_to_int32(length), "UTF-8", to_encoding, policy);
 }
 
 // Big5 helpers (C-style, null-terminated)
-std::string big5_to_utf8(const char* big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
-    return to_utf8(big5_bytes, "Big5", bypass_on_decode_error);
+std::string big5_to_utf8(const char* big5_bytes, const InvalidCharPolicy policy) {
+    return to_utf8(big5_bytes, "Big5", policy);
 }
 
-std::string utf8_to_big5(const char* utf8, const BypassOnDecodeError bypass_on_decode_error) {
-    return from_utf8(utf8, "Big5", bypass_on_decode_error);
+std::string utf8_to_big5(const char* utf8, const InvalidCharPolicy policy) {
+    return from_utf8(utf8, "Big5", policy);
 }
 
-std::string big5_to_utf8_dr(const char* big5_bytes, const BypassOnDecodeError bypass_on_decode_error) {
+std::string big5_to_utf8_dr(const char* big5_bytes, const InvalidCharPolicy policy) {
     if (big5_bytes == nullptr) {
         throw std::invalid_argument("big5_to_utf8_dr: input is null");
     }
     const std::size_t len = std::char_traits<char>::length(big5_bytes);
     const std::size_t guess = safe_add(safe_multiply(len, 3u), 16u);
-    return convert_encoding_streaming(std::string_view(big5_bytes, len), "Big5", "UTF-8", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(std::string_view(big5_bytes, len), "Big5", "UTF-8", guess, policy);
 }
 
-std::string utf8_to_big5_dr(const char* utf8, const BypassOnDecodeError bypass_on_decode_error) {
+std::string utf8_to_big5_dr(const char* utf8, const InvalidCharPolicy policy) {
     if (utf8 == nullptr) {
         throw std::invalid_argument("utf8_to_big5_dr: input is null");
     }
     const std::size_t len = std::char_traits<char>::length(utf8);
     const std::size_t guess = safe_add(safe_multiply(len, 2u), 16u);
-    return convert_encoding_streaming(std::string_view(utf8, len), "UTF-8", "Big5", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(std::string_view(utf8, len), "UTF-8", "Big5", guess, policy);
 }
 
 // Big5 helpers (C-style with explicit length)
-std::string big5_to_utf8(const char* big5_bytes, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
-    return to_utf8(big5_bytes, length, "Big5", bypass_on_decode_error);
+std::string big5_to_utf8(const char* big5_bytes, const std::size_t length, const InvalidCharPolicy policy) {
+    return to_utf8(big5_bytes, length, "Big5", policy);
 }
 
-std::string utf8_to_big5(const char* utf8, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
-    return from_utf8(utf8, length, "Big5", bypass_on_decode_error);
+std::string utf8_to_big5(const char* utf8, const std::size_t length, const InvalidCharPolicy policy) {
+    return from_utf8(utf8, length, "Big5", policy);
 }
 
-std::string big5_to_utf8_dr(const char* big5_bytes, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
+std::string big5_to_utf8_dr(const char* big5_bytes, const std::size_t length, const InvalidCharPolicy policy) {
     if (big5_bytes == nullptr) {
         if (length == 0) return {};
         throw std::invalid_argument("big5_to_utf8_dr: input is null");
     }
     const std::size_t guess = safe_add(safe_multiply(length, 3u), 16u);
-    return convert_encoding_streaming(std::string_view(big5_bytes, length), "Big5", "UTF-8", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(std::string_view(big5_bytes, length), "Big5", "UTF-8", guess, policy);
 }
 
-std::string utf8_to_big5_dr(const char* utf8, const std::size_t length, const BypassOnDecodeError bypass_on_decode_error) {
+std::string utf8_to_big5_dr(const char* utf8, const std::size_t length, const InvalidCharPolicy policy) {
     if (utf8 == nullptr) {
         if (length == 0) return {};
         throw std::invalid_argument("utf8_to_big5_dr: input is null");
     }
     const std::size_t guess = safe_add(safe_multiply(length, 2u), 16u);
-    return convert_encoding_streaming(std::string_view(utf8, length), "UTF-8", "Big5", guess, bypass_on_decode_error);
+    return convert_encoding_streaming(std::string_view(utf8, length), "UTF-8", "Big5", guess, policy);
 }
 
 } // namespace utf8ansi

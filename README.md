@@ -137,64 +137,76 @@ int main() {
 }
 ```
 
-### Bypassing decode errors (optional)
-By default, all converters stop on invalid input and throw an exception. If you know that some inputs may be mislabeled (e.g., bytes are actually UTF-8 but the code path passes `"Big5"`), you can opt into a safe bypass that returns the original input unchanged when decoding fails:
+### Invalid-character policy (optional)
+By default, all converters stop on invalid input and throw `std::runtime_error`. The optional last parameter on every conversion function selects a different policy via the `InvalidCharPolicy` enum:
+
+| Mode | Behavior |
+| --- | --- |
+| `Throw` (default) | Throw `std::runtime_error` on any invalid byte/character. |
+| `Bypass` | If the source is already valid in `to_encoding`, skip the transform and return it unchanged. Otherwise transform normally; if `from_encoding` decoding fails, return the original source bytes unchanged. **Decode side only** — encode-side errors still throw. |
+| `Substitute` | ICU substitutes invalid units with the converter's substitution character (e.g. U+FFFD when decoding to UTF-16, `0x3F`/`?` when encoding to Big5). |
+| `Skip` | ICU drops invalid units from the output and continues. |
+| `Escape` | ICU emits a textual escape for each invalid unit (default style: `%UXXXX` / `%XNN`). |
+
+`Substitute`, `Skip`, and `Escape` apply to both directions: invalid input bytes during decoding **and** characters that can't be represented in the target encoding during encoding.
 
 ```cpp
 using namespace utf8ansi;
 
 std::string bytes = /* maybe mislabeled as Big5 */;
 // Try Big5 -> UTF-8, but if it isn't actually Big5, just return bytes unchanged.
-auto out = big5_to_utf8(bytes, BypassOnDecodeError::Yes);
+auto out = big5_to_utf8(bytes, InvalidCharPolicy::Bypass);
 
-// Generic
-auto out2 = convert_encoding(bytes, "Big5", "UTF-8", BypassOnDecodeError::Yes);
+// Drop characters that can't be encoded in Big5 (e.g. emoji).
+auto big5 = utf8_to_big5(u8"hello 😀", InvalidCharPolicy::Skip);
+
+// Replace unmappable characters with the converter's substitution char.
+auto big5_sub = utf8_to_big5(u8"hello 😀", InvalidCharPolicy::Substitute);
+
+// Emit textual escapes for unmappable characters.
+auto big5_esc = utf8_to_big5(u8"hello 😀", InvalidCharPolicy::Escape);
 ```
-
-Notes:
-- The bypass only applies to the decode step (source bytes -> UTF-16). If decoding succeeds, conversion proceeds normally.
-- Encode-side errors (UTF-16 -> destination bytes) still throw.
 
 ## API documentation
 All functions are free functions in the `utf8ansi` namespace.
 
-By default, functions throw on decode errors. You can opt into bypassing decode errors by passing the optional `BypassOnDecodeError` parameter (defaults to `BypassOnDecodeError::No`). When set to `Yes`, if the source bytes cannot be decoded to UTF‑16 using `from_encoding`, the function returns the original input bytes unchanged.
+By default, functions throw on conversion errors. You can choose a different behavior by passing the optional `InvalidCharPolicy` parameter (defaults to `InvalidCharPolicy::Throw`). See the "Invalid-character policy" section above for the full list of modes (`Throw`, `Bypass`, `Substitute`, `Skip`, `Escape`).
 
-- `std::string convert_encoding(std::string_view input, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+- `std::string convert_encoding(std::string_view input, std::string_view from_encoding, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
   - Convert bytes from `from_encoding` to `to_encoding`.
-- `std::string to_utf8(std::string_view input, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+- `std::string to_utf8(std::string_view input, std::string_view from_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
   - Convert bytes from `from_encoding` to UTF-8.
-- `std::string from_utf8(std::string_view utf8, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+- `std::string from_utf8(std::string_view utf8, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
   - Convert UTF-8 bytes to `to_encoding`.
 - Big5 helpers:
-  - `std::string big5_to_utf8(std::string_view big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-  - `std::string utf8_to_big5(std::string_view utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-  - `std::string big5_to_utf8_dr(std::string_view big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
-  - `std::string utf8_to_big5_dr(std::string_view utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+  - `std::string big5_to_utf8(std::string_view big5_bytes, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+  - `std::string utf8_to_big5(std::string_view utf8, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+  - `std::string big5_to_utf8_dr(std::string_view big5_bytes, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
+  - `std::string utf8_to_big5_dr(std::string_view utf8, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
 - C-style overloads (null-terminated `const char*`):
   - Generic:
-    - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string to_utf8(const char* input, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string from_utf8(const char* utf8, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string convert_encoding(const char* input, std::string_view from_encoding, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string to_utf8(const char* input, std::string_view from_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string from_utf8(const char* utf8, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
   - Big5 helpers:
-    - `std::string big5_to_utf8(const char* big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string utf8_to_big5(const char* utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string big5_to_utf8_dr(const char* big5_bytes, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
-    - `std::string utf8_to_big5_dr(const char* utf8, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+    - `std::string big5_to_utf8(const char* big5_bytes, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string utf8_to_big5(const char* utf8, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
 - C-style overloads with explicit length (non-null-terminated):
   - Generic:
-    - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
+    - `std::string convert_encoding(const char* input, std::size_t length, std::string_view from_encoding, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string to_utf8(const char* input, std::size_t length, std::string_view from_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string from_utf8(const char* utf8, std::size_t length, std::string_view to_encoding, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
   - Big5 helpers:
-    - `std::string big5_to_utf8(const char* big5_bytes, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string utf8_to_big5(const char* utf8, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);`
-    - `std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
-    - `std::string utf8_to_big5_dr(const char* utf8, std::size_t length, BypassOnDecodeError bypass_on_decode_error = BypassOnDecodeError::No);` (streaming)
+    - `std::string big5_to_utf8(const char* big5_bytes, std::size_t length, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string utf8_to_big5(const char* utf8, std::size_t length, InvalidCharPolicy policy = InvalidCharPolicy::Throw);`
+    - `std::string big5_to_utf8_dr(const char* big5_bytes, std::size_t length, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
+    - `std::string utf8_to_big5_dr(const char* utf8, std::size_t length, InvalidCharPolicy policy = InvalidCharPolicy::Throw);` (streaming)
 
 ### Error handling
-- All functions throw `std::runtime_error` on conversion errors. ICU converters are configured to STOP on errors (no silent substitution).
-- You may opt to bypass decode errors by passing `BypassOnDecodeError::Yes`; in that case, if decoding the source bytes fails because they don't match `from_encoding`, the function returns the original input unchanged.
+- By default, all functions throw `std::runtime_error` on conversion errors (`InvalidCharPolicy::Throw`). ICU converters are configured to STOP on errors with no silent substitution.
+- Pass a different `InvalidCharPolicy` value to change this behavior: `Bypass` returns the original bytes when decoding fails (decode side only); `Substitute`, `Skip`, and `Escape` apply ICU's per-character callbacks symmetrically to both the decode and encode sides so that conversion completes without throwing on invalid characters.
 - For null-terminated C-string overloads (`const char*`), passing `nullptr` throws `std::invalid_argument`.
 - For explicit-length overloads (`const char* ptr, std::size_t len`):
   - If `ptr == nullptr` and `len == 0`, the functions return an empty string.
