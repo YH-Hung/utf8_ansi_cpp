@@ -6,15 +6,20 @@
 
 namespace utf8ansi {
 
-// Controls behavior when source bytes cannot be decoded to UTF-16 using from_encoding.
-// - No  : throw on decode errors (default, existing behavior)
-// - Yes : bypass conversion and return the original input bytes unchanged
+// Controls behavior when the requested encoding transform may be unnecessary or
+// would fail on the source bytes:
+// - No  : always transform; throw on decode errors (default, existing behavior).
+// - Yes : (1) if source bytes are already valid in to_encoding, return them
+//             unchanged without performing any transform;
+//         (2) otherwise transform normally, but if the from_encoding decode
+//             fails, return the original source bytes unchanged.
 enum class BypassOnDecodeError { No, Yes };
 
 // Convert from one encoding to another using ICU.
 // Throws std::runtime_error on failure.
-// If bypass_on_decode_error is Yes and source bytes cannot be decoded using from_encoding,
-// returns the original input bytes unchanged.
+// If bypass_on_decode_error is Yes, the function first checks whether the input
+// is already valid in to_encoding and returns it unchanged if so; otherwise it
+// transforms, falling back to the original input on from_encoding decode failure.
 [[nodiscard]] std::string convert_encoding(std::string_view input,
                              std::string_view from_encoding,
                              std::string_view to_encoding,

@@ -47,6 +47,17 @@ std::size_t safe_add(const std::size_t a, const std::size_t b) {
     return a + b;
 }
 
+// Returns true if `data` (length `len`, or -1 for NUL-terminated) is decodable
+// using converter `cnv`. Uses ICU preflight (no output allocation).
+// Resets converter state before returning so the converter can be reused.
+bool is_decodable_as(UConverter* cnv, const char* data, int32_t len) {
+    UErrorCode status = U_ZERO_ERROR;
+    ucnv_toUChars(cnv, nullptr, 0, data, len, &status);
+    const bool ok = (status == U_BUFFER_OVERFLOW_ERROR || U_SUCCESS(status));
+    ucnv_resetToUnicode(cnv);
+    return ok;
+}
+
 struct UConverterHandle {
     // RAII holder for an ICU UConverter (character set converter).
     // - Acquires the converter in the constructor using an ICU encoding name or alias.
@@ -117,6 +128,17 @@ std::string convert_encoding_impl(const char* input,
 
     const UConverterHandle from(from_encoding);
     const UConverterHandle to(to_encoding);
+
+    // Tier 1 upfront check: if bypass requested and source bytes are already valid in
+    // to_encoding, skip the transform entirely and return them unchanged.
+    if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
+        if (is_decodable_as(to.get(), input, length)) {
+            if (length >= 0) {
+                return std::string(input, static_cast<std::size_t>(length));
+            }
+            return std::string(input, std::char_traits<char>::length(input));
+        }
+    }
 
     // Step 1: Convert from source bytes to UTF-16 (UChar)
     UErrorCode status = U_ZERO_ERROR;
@@ -195,18 +217,20 @@ std::string convert_encoding_streaming(const std::string_view input,
         throw std::invalid_argument("convert_encoding_streaming: input is null but size != 0");
     }
 
-    // Optional preflight decode check: if decoding fails and bypass is requested, return original input
+    const UConverterHandle from(from_encoding);
+    const UConverterHandle to(to_encoding);
+
     if (bypass_on_decode_error == BypassOnDecodeError::Yes) {
-        UErrorCode preStatus = U_ZERO_ERROR;
-        const UConverterHandle fromProbe(from_encoding);
-        ucnv_toUChars(fromProbe.get(), nullptr, 0, input.data(), safe_size_to_int32(input.size()), &preStatus);
-        if (preStatus != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(preStatus)) {
+        const int32_t inLen = safe_size_to_int32(input.size());
+        // Tier 1 upfront check: source already valid in to_encoding -> skip transform.
+        if (is_decodable_as(to.get(), input.data(), inLen)) {
+            return std::string(input);
+        }
+        // Tier 2 fallback: source not decodable as from_encoding -> return unchanged.
+        if (!is_decodable_as(from.get(), input.data(), inLen)) {
             return std::string(input);
         }
     }
-
-    const UConverterHandle from(from_encoding);
-    const UConverterHandle to(to_encoding);
 
     // Prepare output buffer with a heuristic initial capacity.
     std::string out;

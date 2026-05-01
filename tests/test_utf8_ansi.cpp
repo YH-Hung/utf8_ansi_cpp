@@ -532,3 +532,78 @@ TEST(DecodeBypassTest, MislabeledSource_VariousInvalidUtf8_LengthOverloads) {
 
     TEST_SUCCESS_REASON("Explicit-length overloads honored bypass on all " + std::to_string(samples.size()) + " samples");
 }
+
+// --- Tests for upfront skip-if-already-in-target-encoding ---
+//
+// These tests cover the Tier-1 behavior added by the refactor: when bypass=Yes,
+// the library probe-decodes against to_encoding *before* attempting the transform.
+// If the source is already valid in to_encoding, the transform is skipped entirely
+// and the original bytes are returned unchanged.
+
+TEST(SkipIfAlreadyTargetTest, AsciiInput_AlreadyValidInTarget_ReturnedUnchanged) {
+    // ASCII bytes are valid in both UTF-8 and Big5; the upfront probe of the
+    // target encoding should succeed and the transform should be skipped.
+    const std::string s = "Hello, 123!";
+
+    auto out_utf8_to_big5 = convert_encoding(std::string_view(s), "UTF-8", "Big5", BypassOnDecodeError::Yes);
+    auto out_big5_to_utf8 = convert_encoding(std::string_view(s), "Big5", "UTF-8", BypassOnDecodeError::Yes);
+
+    // For pure ASCII the transformed output equals the input regardless, but the
+    // assertion still proves the path is correct (and exercises the skip branch).
+    EXPECT_EQ(out_utf8_to_big5, s);
+    EXPECT_EQ(out_big5_to_utf8, s);
+    TEST_SUCCESS_REASON("ASCII input is detected as already-in-target and returned unchanged under bypass");
+}
+
+TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_BypassReturnsOriginal) {
+    // Caller has valid UTF-8 chinese bytes but mistakenly calls big5_to_utf8 on them.
+    // Source is already valid in to_encoding (UTF-8) -> upfront skip returns it unchanged.
+    // (This is the inverse of MislabeledSource_Big5Bytes_TreatedAsUTF8_*.)
+    const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
+
+    auto out = big5_to_utf8(utf8_chinese, BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, utf8_chinese);
+    TEST_SUCCESS_REASON("UTF-8 bytes mislabeled as Big5 are detected as already-UTF-8 and returned unchanged");
+}
+
+TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_DR_BypassReturnsOriginal) {
+    const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
+
+    auto out = big5_to_utf8_dr(utf8_chinese, BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, utf8_chinese);
+    TEST_SUCCESS_REASON("Streaming variant honors upfront target-encoding skip");
+}
+
+TEST(SkipIfAlreadyTargetTest, ValidUtf8Chinese_MislabeledAsBig5_GenericConvert_BypassReturnsOriginal) {
+    const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
+
+    auto out = convert_encoding(std::string_view(utf8_chinese), "Big5", "UTF-8", BypassOnDecodeError::Yes);
+    EXPECT_EQ(out, utf8_chinese);
+    TEST_SUCCESS_REASON("convert_encoding honors upfront target-encoding skip");
+}
+
+TEST(SkipIfAlreadyTargetTest, ValidInputUnderBypass_StillTransformsCorrectly) {
+    // Source is valid UTF-8 chinese, called as utf8_to_big5(...) with bypass=Yes.
+    // Source is NOT valid in target=Big5 (UTF-8 chinese bytes have continuation
+    // bytes that aren't valid as Big5 trail bytes), so the upfront skip does NOT
+    // fire and a real transform must run. Round-trip must be preserved.
+    const std::string utf8_chinese = "\xE4\xB8\xAD\xE6\x96\x87"; // "中文"
+
+    auto big5 = utf8_to_big5(utf8_chinese, BypassOnDecodeError::Yes);
+    auto round = big5_to_utf8(big5, BypassOnDecodeError::Yes);
+    EXPECT_NE(big5, utf8_chinese); // proves a real transform happened
+    EXPECT_EQ(round, utf8_chinese);
+    TEST_SUCCESS_REASON("Bypass=Yes does not short-circuit valid transforms; round-trip preserved");
+}
+
+TEST(SkipIfAlreadyTargetTest, GarbageBytes_FallsBackToTier2_ReturnsOriginal) {
+    // Bytes that are invalid in both UTF-8 and Big5 should still be returned
+    // unchanged via the Tier-2 fallback (preserves existing contract).
+    const std::string garbage = std::string("\xFF\xFE", 2); // invalid as UTF-8 first byte
+
+    auto out_utf8_to_big5 = utf8_to_big5(garbage, BypassOnDecodeError::Yes);
+    auto out_dr = utf8_to_big5_dr(garbage, BypassOnDecodeError::Yes);
+    EXPECT_EQ(out_utf8_to_big5, garbage);
+    EXPECT_EQ(out_dr, garbage);
+    TEST_SUCCESS_REASON("Tier-2 fallback still returns garbage bytes unchanged under bypass");
+}
