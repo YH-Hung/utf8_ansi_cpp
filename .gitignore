@@ -69,3 +69,6 @@ compile_commands.json
 *.orig
 Thumbs.db
 ehthumbs.db
+
+# LLVM build cache
+.cache/

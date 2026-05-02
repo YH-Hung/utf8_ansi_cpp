@@ -10,16 +10,12 @@ namespace utf8ansi {
 // encodings. The policy is applied symmetrically to both ICU callbacks
 // (decode side `toU` and encode side `fromU`) where applicable.
 //
+// All policies share one upfront behaviour: if the source bytes are already
+// valid in to_encoding, the transform is skipped and the source is returned
+// unchanged, regardless of whether it is valid in from_encoding.
+//
 // - Throw      : ICU STOP callbacks both ways; throw std::runtime_error on
-//                any conversion error (default; previous `BypassOnDecodeError::No`).
-// - Bypass     : ICU STOP callbacks both ways, plus a higher-level fallback
-//                applied only on the decode side:
-//                  (1) if source bytes are already valid in to_encoding, return
-//                      them unchanged without performing any transform;
-//                  (2) otherwise transform normally, but if the from_encoding
-//                      decode fails, return the original source bytes unchanged.
-//                Encode-side errors still throw under Bypass (matches the
-//                previous `BypassOnDecodeError::Yes` contract).
+//                any conversion error (default).
 // - Substitute : ICU UCNV_*_CALLBACK_SUBSTITUTE — invalid units are replaced
 //                with the converter's substitution character/sequence
 //                (e.g. U+FFFD on decode; '?' or 0x3F on encode for SBCS/DBCS).
@@ -27,7 +23,7 @@ namespace utf8ansi {
 //                the output and conversion continues.
 // - Escape     : ICU UCNV_*_CALLBACK_ESCAPE with the default style — invalid
 //                units are emitted as a textual escape (e.g. `%UXXXX` / `%XNN`).
-enum class InvalidCharPolicy { Throw, Bypass, Substitute, Skip, Escape };
+enum class InvalidCharPolicy { Throw, Substitute, Skip, Escape };
 
 // Convert from one encoding to another using ICU.
 // Throws std::runtime_error on failure unless `policy` selects a non-throwing

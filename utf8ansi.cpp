@@ -60,8 +60,6 @@ bool is_decodable_as(UConverter* cnv, const char* data, int32_t len) {
 }
 
 // Resolve the policy to a (toU, fromU) pair of ICU callback function pointers.
-// Both Throw and Bypass install STOP at the ICU layer; Bypass adds a
-// higher-level fallback in the impl/streaming functions.
 struct CallbackPair {
     UConverterToUCallback to_u;
     UConverterFromUCallback from_u;
@@ -70,7 +68,6 @@ struct CallbackPair {
 CallbackPair callbacks_for(InvalidCharPolicy policy) {
     switch (policy) {
         case InvalidCharPolicy::Throw:
-        case InvalidCharPolicy::Bypass:
             return {UCNV_TO_U_CALLBACK_STOP, UCNV_FROM_U_CALLBACK_STOP};
         case InvalidCharPolicy::Substitute:
             return {UCNV_TO_U_CALLBACK_SUBSTITUTE, UCNV_FROM_U_CALLBACK_SUBSTITUTE};
@@ -86,7 +83,7 @@ struct UConverterHandle {
     // RAII holder for an ICU UConverter (character set converter).
     // - Acquires the converter in the constructor using an ICU encoding name or alias.
     // - Configures both "to Unicode" and "from Unicode" callbacks per the supplied
-    //   InvalidCharPolicy (defaults to STOP, matching the Throw / Bypass modes).
+    //   InvalidCharPolicy (defaults to STOP, matching the Throw mode).
     // - Releases the converter in the destructor.
     //
     // Usage: create as an automatic (stack) variable and pass get() to ICU APIs.
@@ -137,7 +134,7 @@ struct UConverterHandle {
  * - policy: how to handle invalid characters. See InvalidCharPolicy in the header.
  *
  * Throws std::invalid_argument if input is null.
- * Throws std::runtime_error on ICU errors during either phase (Throw / Bypass on encode side).
+ * Throws std::runtime_error on ICU errors during either phase (Throw policy).
  * Returns the converted bytes without a terminating NUL.
  */
 std::string convert_encoding_impl(const char* input,
@@ -152,46 +149,30 @@ std::string convert_encoding_impl(const char* input,
         throw std::invalid_argument("convert_encoding: input is null");
     }
 
-    const UConverterHandle from(from_encoding, policy);
-    const UConverterHandle to(to_encoding, policy);
-
-    // Tier 1 upfront check: if Bypass requested and source bytes are already valid in
-    // to_encoding, skip the transform entirely and return them unchanged.
-    if (policy == InvalidCharPolicy::Bypass) {
-        if (is_decodable_as(to.get(), input, length)) {
-            if (length >= 0) {
+    // Upfront check: probe using STOP callbacks so that Substitute/Skip/Escape callbacks
+    // cannot mask invalid bytes. If source is natively valid in to_encoding, skip.
+    {
+        const UConverterHandle to_probe(to_encoding, InvalidCharPolicy::Throw);
+        if (is_decodable_as(to_probe.get(), input, length)) {
+            if (length >= 0)
                 return std::string(input, static_cast<std::size_t>(length));
-            }
             return std::string(input, std::char_traits<char>::length(input));
         }
     }
+
+    const UConverterHandle from(from_encoding, policy);
+    const UConverterHandle to(to_encoding, policy);
 
     // Step 1: Convert from source bytes to UTF-16 (UChar)
     UErrorCode status = U_ZERO_ERROR;
     const int32_t uLen = ucnv_toUChars(from.get(), nullptr, 0, input, length, &status);
     if (status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) {
-        if (policy == InvalidCharPolicy::Bypass) {
-            if (length >= 0) {
-                return std::string(input, static_cast<std::size_t>(length));
-            } else {
-                const std::size_t len = std::char_traits<char>::length(input);
-                return std::string(input, len);
-            }
-        }
         throw std::runtime_error("ICU preflight toUChars failed for encoding: " + std::string(from_encoding));
     }
     status = U_ZERO_ERROR;
     std::vector<UChar> ubuf(static_cast<size_t>(uLen) + 1u);
     const int32_t uWritten = ucnv_toUChars(from.get(), ubuf.data(), uLen + 1, input, length, &status);
     if (U_FAILURE(status)) {
-        if (policy == InvalidCharPolicy::Bypass) {
-            if (length >= 0) {
-                return std::string(input, static_cast<std::size_t>(length));
-            } else {
-                const std::size_t len = std::char_traits<char>::length(input);
-                return std::string(input, len);
-            }
-        }
         throw std::runtime_error("ICU toUChars failed for encoding: " + std::string(from_encoding));
     }
 
@@ -221,9 +202,9 @@ std::string convert_encoding_impl(const char* input,
  * Streaming conversion using ICU ucnv_convertEx to avoid allocating a full UTF-16 buffer.
  *
  * Converts incrementally through a small UTF-16 pivot buffer, growing the output buffer
- * as needed. Converters are configured per the InvalidCharPolicy. For Throw (and Bypass
- * past the upfront probes) any ICU error becomes a std::runtime_error; for Substitute /
- * Skip / Escape, ICU never reports U_FAILURE because the callback handles invalid units.
+ * as needed. Converters are configured per the InvalidCharPolicy. For Throw any ICU error
+ * becomes a std::runtime_error; for Substitute / Skip / Escape, ICU never reports
+ * U_FAILURE because the callback handles invalid units.
  *
  * Parameters:
  * - input: the source bytes to convert.
@@ -234,7 +215,7 @@ std::string convert_encoding_impl(const char* input,
  *
  * Returns the converted bytes.
  * Throws std::invalid_argument if input.data() is null while input.size() != 0.
- * Throws std::runtime_error on ICU conversion errors (Throw / Bypass on encode side).
+ * Throws std::runtime_error on ICU conversion errors (Throw policy).
  */
 std::string convert_encoding_streaming(const std::string_view input,
                                               const std::string_view from_encoding,
@@ -245,20 +226,18 @@ std::string convert_encoding_streaming(const std::string_view input,
         throw std::invalid_argument("convert_encoding_streaming: input is null but size != 0");
     }
 
-    const UConverterHandle from(from_encoding, policy);
-    const UConverterHandle to(to_encoding, policy);
-
-    if (policy == InvalidCharPolicy::Bypass) {
+    // Upfront check: probe using STOP callbacks so that Substitute/Skip/Escape callbacks
+    // cannot mask invalid bytes. If source is natively valid in to_encoding, skip.
+    {
         const int32_t inLen = safe_size_to_int32(input.size());
-        // Tier 1 upfront check: source already valid in to_encoding -> skip transform.
-        if (is_decodable_as(to.get(), input.data(), inLen)) {
-            return std::string(input);
-        }
-        // Tier 2 fallback: source not decodable as from_encoding -> return unchanged.
-        if (!is_decodable_as(from.get(), input.data(), inLen)) {
+        const UConverterHandle to_probe(to_encoding, InvalidCharPolicy::Throw);
+        if (is_decodable_as(to_probe.get(), input.data(), inLen)) {
             return std::string(input);
         }
     }
+
+    const UConverterHandle from(from_encoding, policy);
+    const UConverterHandle to(to_encoding, policy);
 
     // Prepare output buffer with a heuristic initial capacity.
     std::string out;

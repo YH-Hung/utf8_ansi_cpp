@@ -65,8 +65,8 @@ public:
                     reason = "C-string helper overloads behave consistently";
                 } else if (contains(name, "DR_")) {
                     reason = "Streaming direct converter behaves correctly";
-                } else if (contains(suite, "DecodeBypass") || contains(name, "MislabeledSource") || contains(name, "Bypass")) {
-                    reason = "Bypass-on-decode-error behavior matches expectation";
+                } else if (contains(suite, "SkipIfAlreadyTarget") || contains(name, "AlreadyValid") || contains(name, "AllPolicies")) {
+                    reason = "Skip-if-already-in-target-encoding behavior matches expectation";
                 } else {
                     reason = "All assertions satisfied";
                 }
